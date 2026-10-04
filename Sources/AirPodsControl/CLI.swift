@@ -219,7 +219,8 @@ Options:
                Duplicate exact names are ambiguous.
   --modes <m1,m2[,...]>
                Cycle set for listening-mode cycle: at least two distinct
-               modes, comma-separated. Mode aliases are accepted.
+               modes, comma-separated. Mode aliases are accepted. A
+               repeated mode is an error.
   --explicit-order
                Cycle modes in the order given. Requires --modes. Supply
                it once.
@@ -345,9 +346,7 @@ func helpText(for rawArgs: [String]) -> String? {
   }
 }
 
-// Parses a --modes value into distinct modes in cycle order.
-// Empty or unknown tokens and sets of fewer than two distinct modes are
-// parse errors.
+// Returns the modes accepted by distinctCycleModes in cycle order.
 func parseCycleModes(_ raw: String) throws -> [ListeningMode] {
   let ordered = try distinctCycleModes(raw)
   let unique = Set(ordered)
@@ -368,6 +367,9 @@ private func cycleRequest(
   return .subset(try parseCycleModes(rawModes))
 }
 
+// Parses a --modes list in the order given.
+// Empty or unknown tokens, a repeated canonical mode (an alias of a mode
+// already listed counts), and fewer than two modes are parse errors.
 private func distinctCycleModes(_ raw: String) throws -> [ListeningMode] {
   let tokens = try raw
     .split(separator: ",", omittingEmptySubsequences: false)
@@ -380,9 +382,8 @@ private func distinctCycleModes(_ raw: String) throws -> [ListeningMode] {
   var ordered: [ListeningMode] = []
   var seen = Set<ListeningMode>()
   for mode in tokens {
-    if seen.insert(mode).inserted {
-      ordered.append(mode)
-    }
+    guard seen.insert(mode).inserted else { throw CLIParseError() }
+    ordered.append(mode)
   }
   guard ordered.count >= 2 else { throw CLIParseError() }
   return ordered

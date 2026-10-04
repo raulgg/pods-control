@@ -123,8 +123,12 @@ struct CLIParsingTests {
         ["lm", "cycle", "--modes", "transparency"]
       ),
       InvalidInvocation(
-        "aliases deduplicate",
+        "repeated alias",
         ["lm", "cycle", "--modes", "trans,transparency"]
+      ),
+      InvalidInvocation(
+        "repeated mode",
+        ["lm", "cycle", "--modes", "adaptive,transparency,adaptive"]
       ),
       InvalidInvocation(
         "unknown mode",
@@ -158,8 +162,16 @@ struct CLIParsingTests {
         ]
       ),
       InvalidInvocation(
-        "explicit order aliases deduplicate",
+        "explicit order repeated alias",
         ["lm", "cycle", "--modes", "trans,transparency", "--explicit-order"]
+      ),
+      InvalidInvocation(
+        "explicit order repeated mode",
+        [
+          "lm", "cycle", "--modes",
+          "off,transparency,noise-cancellation,adaptive,off,noise-cancellation",
+          "--explicit-order",
+        ]
       ),
     ]
   )
@@ -203,7 +215,7 @@ struct CLIParsingTests {
     )
 
     let flagAfterModes = try parseInvocation([
-      "lm", "cycle", "--modes", "anc,trans,adaptive,anc", "--explicit-order",
+      "lm", "cycle", "--modes", "anc,trans,adaptive", "--explicit-order",
     ])
     let flagAfterRequest = try #require(
       listeningModeCycleRequest(from: flagAfterModes.command)
@@ -212,7 +224,7 @@ struct CLIParsingTests {
       flagAfterRequest == .explicitOrder([
         .noiseCancellation, .transparency, .adaptive,
       ]),
-      "aliases canonicalize and duplicate names are ignored"
+      "aliases canonicalize and the flag follows --modes"
     )
 
     let defaultCycle = try parseInvocation(["lm", "cycle"])

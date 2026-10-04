@@ -158,8 +158,8 @@ transparency
 ```
 
 The command accepts the mode aliases listed above. The order of those modes
-does not matter unless `--explicit-order` is set. Fewer than two
-distinct modes or an unknown token produces `bad-args` (exit `2`). The
+does not matter unless `--explicit-order` is set. Fewer than two modes,
+a repeated mode, or an unknown token produces `bad-args` (exit `2`). The
 command skips modes that the connected device does not support. If fewer
 than two remain, it reports `unsupported` (exit `4`). A change that cannot
 be verified reports `no-op` (exit `3`).
