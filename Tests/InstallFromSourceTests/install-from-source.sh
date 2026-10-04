@@ -71,10 +71,14 @@ assert_new_layout() {
 	done
 	[ ! -e "$prefix/libexec/airpods-control" ] ||
 		fail "legacy libexec remains in $prefix"
+	[ -f "$prefix/libexec/pods-control/avbypass.dylib" ] ||
+		fail "missing avbypass.dylib in $prefix"
 	for page in pods-control airpods-control; do
 		[ -f "$prefix/share/man/man1/$page.1" ] ||
 			fail "missing $page man page in $prefix"
 	done
+	man -M "$prefix/share/man" airpods-control | grep -q pods-control ||
+		fail "airpods-control man page did not resolve in $prefix"
 }
 
 assert_removed() {
@@ -138,10 +142,7 @@ chmod +x "$PREFIX/libexec/pods-control/pods-control"
 output=$(BREW="$stub/brew" FAKE_BREW_PREFIX="$brew_root" \
 	"$SCRIPT" --from-tree --prefix "$PREFIX" 2>&1) ||
 	fail "upgrade aborted when old --version failed: $output"
-got=$("$PREFIX/bin/pods-control" --version) ||
-	fail "repaired binary did not run"
-[ "$got" = "$expected_version" ] ||
-	fail "repaired binary reported $got, expected $expected_version"
+assert_new_layout "$PREFIX"
 
 for name in pods-control airpods-control; do
 	foreign=$TMP/foreign-$name
