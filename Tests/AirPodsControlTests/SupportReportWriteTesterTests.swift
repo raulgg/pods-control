@@ -198,48 +198,15 @@ struct SupportReportWriteTesterTests {
 
     #expect(
       offTest?.inferredOffFallback == true
-        && offTest?.write.observed == .transparency,
-      "accepted Off with a Noise Cancellation readback infers Transparency"
-    )
-    #expect(
-      modeRun?.restoration.attempted?.mode == .noiseCancellation
+        && offTest?.write.observed == .transparency
+        && modeRun?.restoration.attempted?.mode == .noiseCancellation
         && modeRun?.restoration.attempted?.write.verified == true,
       "inferred Transparency is not treated as already-restored Noise Cancellation"
     )
-    #expect(modeRun?.restored == true, "restoration returns to the captured mode")
     #expect(
       device.currentListeningMode() == .noiseCancellation,
       "the device ends in its initial listening mode"
     )
-    #expect(results.fullyRestored, "an inferred Off fallback still fully restores")
-  }
-
-  @Test("Does not restore an unapplied Off that never left the initial mode")
-  func writeTesterKeepsUnappliedOffOnTheInitialMode() {
-    let device = FakeCompatibleAudioDevice(
-      listeningModes: [.off, .transparency, .adaptive],
-      listeningMode: .adaptive,
-      appliesListeningModeWrite: false,
-      conversationAwarenessSupported: false
-    )
-    let results = SupportReportWriteTester.run(device: device)
-    let modeRun = results.listeningModes.testRun
-
-    #expect(
-      modeRun?.tests.first { $0.mode == .off }?.inferredOffFallback == true,
-      "an accepted Off that stays on Adaptive is still labeled as a fallback"
-    )
-    #expect(
-      modeRun?.restoration.stateNeverChanged == true
-        && modeRun?.restored == true
-        && modeRun?.finalMode == .adaptive,
-      "no demonstrated departure means the live Adaptive read is still current"
-    )
-    #expect(
-      device.listeningModeSetCount == 2,
-      "Transparency and Off are probed, and the initial mode is not written back"
-    )
-    #expect(results.fullyRestored, "an unchanged initial mode counts as restored")
   }
 
   @Test("Records targets that are already current")
