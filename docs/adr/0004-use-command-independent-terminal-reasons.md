@@ -44,7 +44,9 @@ added. `success` maps to `"result":"ok"` without `error`, and `no-op` maps to
 Caught signals retain `"result":"interrupted"` plus the numeric `signal` and
 omit `error`. A caught signal remains the terminal reason even when the command
 cannot confirm restoration; that uncertainty stays in the detailed report.
-Command-specific data fields remain unchanged.
+Command-specific data fields remain unchanged. A classified parse failure
+may add `reason` with the same sentence written to stderr. `error` stays
+`bad-args`.
 
 ### Mutation classification
 

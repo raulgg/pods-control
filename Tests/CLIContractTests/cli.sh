@@ -63,5 +63,7 @@ assert_equal "$VERSION" "$(cat "$PROBE_DIR/debug.stdout")" \
 expect_failure 2 bad-args "$CLI" unknown-command
 expect_failure 2 '{"error":"bad-args","result":"error"}' \
   "$CLI" lm get --json --json
+expect_failure 2 '{"error":"bad-args","reason":"listening mode \"transparency\" is repeated in --modes; list each mode once","result":"error"}' \
+  "$CLI" lm cycle --modes trans,transparency --json
 
 printf '%s\n' 'CLI contract tests passed'

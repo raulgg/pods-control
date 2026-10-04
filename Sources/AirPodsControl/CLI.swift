@@ -63,7 +63,47 @@ struct CLIInvocation {
   let requestedDeviceName: String?
 }
 
-struct CLIParseError: Error {}
+struct CLIParseError: Error, Equatable {
+  enum Reason: Equatable {
+    case unknownListeningMode(token: String)
+    case emptyCycleToken
+    case repeatedMode(ListeningMode)
+    case singleCycleMode
+    case unknownConversationAwarenessState(token: String)
+  }
+
+  let reason: Reason?
+
+  init(reason: Reason? = nil) {
+    self.reason = reason
+  }
+
+  var stderrLine: String? {
+    switch reason {
+    case let .unknownListeningMode(token):
+      return "unknown listening mode \(quotedToken(token)); expected off, transparency, adaptive, noise-cancellation"
+    case .emptyCycleToken:
+      return "empty listening-mode token in --modes"
+    case let .repeatedMode(mode):
+      return "listening mode \(quotedToken(mode.rawValue)) is repeated in --modes; list each mode once"
+    case .singleCycleMode:
+      return "--modes lists one distinct mode; cycle needs at least two"
+    case let .unknownConversationAwarenessState(token):
+      return "unknown conversation-awareness state \(quotedToken(token)); expected on or off"
+    case nil:
+      return nil
+    }
+  }
+}
+
+// One stderr line. SafeTerminalText walks Unicode scalars, so a CRLF pair
+// does not stay one Character and slip through. Quote marks are escaped
+// after that, because device names keep their quotes.
+private func quotedToken(_ token: String) -> String {
+  let escaped = SafeTerminalText.escaped(token)
+    .replacingOccurrences(of: "\"", with: "\\\"")
+  return "\"\(escaped)\""
+}
 
 let globalHelp = """
 macOS CLI for AirPods and Beats listening modes.
@@ -196,6 +236,9 @@ Mode aliases:
                adaptive
   anc, nc      noise-cancellation
 
+An unknown mode token exits bad-args and names the token on stderr. --json
+puts that sentence in reason.
+
 Cycle:
   cycle advances in Cycle order: off, transparency, adaptive, and
   noise-cancellation, wrapping around, and prints the mode it landed on.
@@ -212,6 +255,8 @@ Cycle:
   given, wrapping from the last mode to the first. If the current mode is
   unknown, or outside the set, cycle starts at the first mode in the
   order given.
+  An empty --modes token, a one-mode set, or a repeated mode exits bad-args
+  and names that mistake on stderr. --json puts that sentence in reason.
 
 Options:
   --device NAME
@@ -249,6 +294,9 @@ Usage:
 
 Alias:
   ca
+
+set accepts on or off. Another state token exits bad-args and names the token
+on stderr. --json puts that sentence in reason.
 
 Options:
   --device NAME
@@ -368,24 +416,28 @@ private func cycleRequest(
 }
 
 // Parses a --modes list in the order given.
-// Empty or unknown tokens, a repeated canonical mode (an alias of a mode
-// already listed counts), and fewer than two modes are parse errors.
+// An empty token, an unknown token, a repeated canonical mode (an alias of a
+// mode already listed counts), and fewer than two modes are classified parse
+// errors.
 private func distinctCycleModes(_ raw: String) throws -> [ListeningMode] {
-  let tokens = try raw
-    .split(separator: ",", omittingEmptySubsequences: false)
-    .map { piece -> ListeningMode in
-      guard let mode = ListeningMode(token: String(piece)) else {
-        throw CLIParseError()
-      }
-      return mode
-    }
   var ordered: [ListeningMode] = []
   var seen = Set<ListeningMode>()
-  for mode in tokens {
-    guard seen.insert(mode).inserted else { throw CLIParseError() }
+  for piece in raw.split(separator: ",", omittingEmptySubsequences: false) {
+    let token = String(piece)
+    if token.isEmpty {
+      throw CLIParseError(reason: .emptyCycleToken)
+    }
+    guard let mode = ListeningMode(token: token) else {
+      throw CLIParseError(reason: .unknownListeningMode(token: token))
+    }
+    guard seen.insert(mode).inserted else {
+      throw CLIParseError(reason: .repeatedMode(mode))
+    }
     ordered.append(mode)
   }
-  guard ordered.count >= 2 else { throw CLIParseError() }
+  guard ordered.count >= 2 else {
+    throw CLIParseError(reason: .singleCycleMode)
+  }
   return ordered
 }
 
@@ -518,10 +570,9 @@ func parseInvocation(_ rawArgs: [String]) throws -> CLIInvocation {
       command = .listeningModeGet
 
     case "set":
-      guard positional.count == 3,
-            let mode = ListeningMode(token: positional[2])
-      else {
-        throw CLIParseError()
+      guard positional.count == 3 else { throw CLIParseError() }
+      guard let mode = ListeningMode(token: positional[2]) else {
+        throw CLIParseError(reason: .unknownListeningMode(token: positional[2]))
       }
       command = .listeningModeSet(mode)
 
@@ -549,10 +600,17 @@ func parseInvocation(_ rawArgs: [String]) throws -> CLIInvocation {
       command = .conversationAwarenessGet
 
     case "set":
-      guard positional.count == 3, ["on", "off"].contains(positional[2]) else {
-        throw CLIParseError()
+      guard positional.count == 3 else { throw CLIParseError() }
+      switch positional[2] {
+      case "on":
+        command = .conversationAwarenessSet(true)
+      case "off":
+        command = .conversationAwarenessSet(false)
+      default:
+        throw CLIParseError(
+          reason: .unknownConversationAwarenessState(token: positional[2])
+        )
       }
-      command = .conversationAwarenessSet(positional[2] == "on")
 
     default:
       throw CLIParseError()

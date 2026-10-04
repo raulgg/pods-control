@@ -30,10 +30,12 @@ For interactive use, `trans` aliases `transparency`; `automatic` and `auto`
 alias `adaptive`; and `anc` and `nc` alias `noise-cancellation`. Output always
 uses the canonical names. There is intentionally no alias for `off`.
 
-An unknown mode or state token produces `bad-args` (exit `2`). For an individual
-resource command, a valid feature that the connected hardware does not provide
-produces `unsupported` (exit `4`). Aggregate status instead omits a
-proven-unsupported field.
+An unknown mode or state token produces `bad-args` (exit `2`). Stderr names
+the unknown listening mode, or a conversation-awareness state other than
+`on` or `off`. `--json` copies that sentence into `reason` and keeps `error`
+as `bad-args`. For an individual resource command, a valid feature that the
+connected hardware does not provide produces `unsupported` (exit `4`).
+Aggregate status instead omits a proven-unsupported field.
 
 Operational commands accept `--device NAME`, `--json`, and `--debug` in any
 position. `--device` uses a case-insensitive, whole-name match among the
@@ -159,8 +161,10 @@ transparency
 
 The command accepts the mode aliases listed above. The order of those modes
 does not matter unless `--explicit-order` is set. Fewer than two modes,
-a repeated mode, or an unknown token produces `bad-args` (exit `2`). The
-command skips modes that the connected device does not support. If fewer
+a repeated mode, or an unknown token produces `bad-args` (exit `2`). Stderr
+names an unknown mode, an empty token, a repeated mode, or a one-mode set.
+`--json` copies that sentence into `reason` and keeps `error` as `bad-args`.
+The command skips modes that the connected device does not support. If fewer
 than two remain, it reports `unsupported` (exit `4`). A change that cannot
 be verified reports `no-op` (exit `3`).
 
@@ -714,6 +718,13 @@ $ pods-control listening-mode get --json
 The second shape applies whenever a one-target command has multiple eligible
 candidates; JSON never opens the interactive chooser.
 
+A classified parse failure uses `"error":"bad-args"`. The `reason` string
+matches the stderr sentence. `listening-mode set` and
+`conversation-awareness set` use that field for an unknown token.
+`listening-mode cycle` uses it for an unknown mode, an empty `--modes`
+token, a repeated mode, or a one-mode set. A parse failure with no
+classified reason omits `reason`.
+
 `listening-mode list` also returns `supportedListeningModes`. An unverified
 write uses `"result":"no-op"` and exits `3`. The response contains the final
 canonical state read during the bounded settling window, the Transparency
@@ -866,7 +877,7 @@ Every normal code has one command-independent meaning:
 | ---: | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 |  `0` | `success`          | The command fulfilled its primary contract without violating a safety invariant.                                                          |
 |  `1` | `no-device`        | No target resolved under the command's device contract.                                                                                   |
-|  `2` | `bad-args`         | Arguments are missing or malformed.                                                                                                       |
+|  `2` | `bad-args`         | Arguments are missing or malformed. A classified parse failure also writes the sentence to stderr and, with `--json`, to `reason`.       |
 |  `3` | `no-op`            | A setter accepted the request, but the requested feature state was not verified and no required final-state invariant remains unresolved. |
 |  `4` | `unsupported`      | Affirmative target-specific evidence excludes the requested operation.                                                                    |
 |  `5` | `read-error`       | A primary information read failed without producing a usable result.                                                                      |
