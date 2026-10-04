@@ -228,8 +228,18 @@ let invocation: CLIInvocation
 do {
   invocation = try parseInvocation(rawArgs)
 } catch {
+  let line = (error as? CLIParseError)?.stderrLine
+  if let line {
+    fputs(line + "\n", stderr)
+    fflush(stderr)
+  }
   preliminaryLogger.warning("cli.parse", "bad-args")
-  finish(plain: "bad-args", terminalReason: .badArgs, jsonOutput: preliminaryJSON)
+  finish(
+    plain: "bad-args",
+    terminalReason: .badArgs,
+    jsonOutput: preliminaryJSON,
+    data: line.map { ["reason": JSONValue.string($0)] } ?? [:]
+  )
 }
 
 let supportReport = SupportReportCommand(

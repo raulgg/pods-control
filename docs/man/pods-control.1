@@ -318,7 +318,12 @@ the current state does not issue another write. It uses the same
 .B ok
 and
 .B no-op
-contract as listening mode.
+contract as listening mode. Another state token is
+.B bad-args
+(exit 2), and stderr names the token.
+.B --json
+includes that sentence as
+.BR reason .
 .SS GLOBAL
 .TP
 .B support-report
@@ -386,6 +391,12 @@ alias
 .BR noise-cancellation .
 Output always uses canonical names. There is no alias for
 .BR off .
+An unknown mode token is
+.B bad-args
+(exit 2), and stderr names the token.
+.B --json
+includes that sentence as
+.BR reason .
 .SH OPTIONS
 .TP
 .BI "--modes " m1,m2[,...]
@@ -393,9 +404,13 @@ For
 .BR "listening-mode cycle" :
 a comma-separated subset of the modes documented under
 .BR MODES ,
-at least two distinct entries. Mode aliases are accepted. A repeated mode or an unknown token is
+at least two distinct entries. Mode aliases are accepted. An unknown token,
+an empty token, a repeated mode, or a one-mode set is
 .B bad-args
-(exit 2).
+(exit 2), and stderr names the mistake.
+.B --json
+includes that sentence as
+.BR reason .
 .TP
 .B --explicit-order
 For
@@ -438,7 +453,13 @@ other normal nonzero outcomes use
 .B error
 and add the canonical
 .B error
-token. Caught signals use
+token. A classified parse failure keeps that token as
+.B bad-args
+and adds
+.B reason
+with the same sentence written to stderr. Other parse failures omit
+.BR reason .
+Caught signals use
 .B interrupted
 with the numeric
 .B signal
