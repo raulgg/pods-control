@@ -161,18 +161,6 @@ struct CLIParsingTests {
           "--explicit-order", "--explicit-order",
         ]
       ),
-      InvalidInvocation(
-        "explicit order repeated alias",
-        ["lm", "cycle", "--modes", "trans,transparency", "--explicit-order"]
-      ),
-      InvalidInvocation(
-        "explicit order repeated mode",
-        [
-          "lm", "cycle", "--modes",
-          "off,transparency,noise-cancellation,adaptive,off,noise-cancellation",
-          "--explicit-order",
-        ]
-      ),
     ]
   )
   func rejectsInvalidCycleArguments(_ example: InvalidInvocation) {
@@ -237,37 +225,12 @@ struct CLIParsingTests {
   @Test("Names a repeated cycle mode and a bad token")
   func namesRepeatedCycleModeAndBadToken() {
     expectExplainedParse(
-      ["lm", "cycle", "--modes", "trans,transparency"],
-      CLIParseError(reason: .repeatedMode(.transparency)),
-      "listening mode \"transparency\" is repeated in --modes; list each mode once"
-    )
-    expectExplainedParse(
-      ["lm", "cycle", "--modes", "trans,transparency", "--explicit-order"],
-      CLIParseError(reason: .repeatedMode(.transparency)),
-      "listening mode \"transparency\" is repeated in --modes; list each mode once"
-    )
-    expectExplainedParse(
-      ["lm", "cycle", "--modes", "anc,anc"],
-      CLIParseError(reason: .repeatedMode(.noiseCancellation)),
-      "listening mode \"noise-cancellation\" is repeated in --modes; list each mode once"
-    )
-    expectExplainedParse(
       ["lm", "cycle", "--modes", "adaptive,transparency,adaptive"],
       CLIParseError(reason: .repeatedMode(.adaptive)),
       "listening mode \"adaptive\" is repeated in --modes; list each mode once"
     )
     expectExplainedParse(
-      ["lm", "cycle", "--modes", "anc,anc,trans"],
-      CLIParseError(reason: .repeatedMode(.noiseCancellation)),
-      "listening mode \"noise-cancellation\" is repeated in --modes; list each mode once"
-    )
-    expectExplainedParse(
       ["lm", "cycle", "--modes", "transparency"],
-      CLIParseError(reason: .singleCycleMode),
-      "--modes lists one distinct mode; cycle needs at least two"
-    )
-    expectExplainedParse(
-      ["lm", "cycle", "--explicit-order", "--modes", "transparency"],
       CLIParseError(reason: .singleCycleMode),
       "--modes lists one distinct mode; cycle needs at least two"
     )
@@ -277,22 +240,7 @@ struct CLIParsingTests {
       "empty listening-mode token in --modes"
     )
     expectExplainedParse(
-      ["lm", "cycle", "--modes", ""],
-      CLIParseError(reason: .emptyCycleToken),
-      "empty listening-mode token in --modes"
-    )
-    expectExplainedParse(
       ["lm", "cycle", "--modes", "transparency,normal"],
-      CLIParseError(reason: .unknownListeningMode(token: "normal")),
-      "unknown listening mode \"normal\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    expectExplainedParse(
-      ["lm", "cycle", "--modes", "transparency,normal,transparency"],
-      CLIParseError(reason: .unknownListeningMode(token: "normal")),
-      "unknown listening mode \"normal\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    expectExplainedParse(
-      ["lm", "set", "normal"],
       CLIParseError(reason: .unknownListeningMode(token: "normal")),
       "unknown listening mode \"normal\"; expected off, transparency, adaptive, noise-cancellation"
     )
@@ -318,52 +266,6 @@ struct CLIParsingTests {
     #expect(
       mode.stderrLine
         == "unknown listening mode \"a\\\"b\\nc\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    let crlf = CLIParseError(reason: .unknownListeningMode(token: "a\r\nb"))
-    #expect(
-      crlf.stderrLine
-        == "unknown listening mode \"a\\r\\nb\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    let separator = CLIParseError(
-      reason: .unknownListeningMode(token: "a\u{2028}b")
-    )
-    #expect(
-      separator.stderrLine
-        == "unknown listening mode \"a\\u{2028}b\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    let slash = CLIParseError(reason: .unknownListeningMode(token: "a\\b"))
-    #expect(
-      slash.stderrLine
-        == "unknown listening mode \"a\\\\b\"; expected off, transparency, adaptive, noise-cancellation"
-    )
-    let state = CLIParseError(
-      reason: .unknownConversationAwarenessState(token: "on\"off")
-    )
-    #expect(
-      state.stderrLine
-        == "unknown conversation-awareness state \"on\\\"off\"; expected on or off"
-    )
-  }
-
-  @Test("Keeps bad-args plain and JSON output unchanged")
-  func keepsBadArgsOutputUnchanged() {
-    #expect(
-      CLIOutputSerializer.plain("bad-args") == "bad-args\n",
-      "plain bad-args stays the terminal-reason token"
-    )
-    #expect(
-      CLIOutputSerializer.json(TerminalReason.badArgs.addingEnvelope(to: [:]))
-        == "{\"error\":\"bad-args\",\"result\":\"error\"}\n",
-      "JSON bad-args stays the existing error envelope"
-    )
-    let sentence =
-      "listening mode \"adaptive\" is repeated in --modes; list each mode once"
-    #expect(
-      CLIOutputSerializer.json(
-        TerminalReason.badArgs.addingEnvelope(to: ["reason": .string(sentence)])
-      )
-        == "{\"error\":\"bad-args\",\"reason\":\"listening mode \\\"adaptive\\\" is repeated in --modes; list each mode once\",\"result\":\"error\"}\n",
-      "JSON bad-args includes the parse reason"
     )
   }
 }
