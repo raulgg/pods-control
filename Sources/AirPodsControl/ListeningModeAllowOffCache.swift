@@ -17,6 +17,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
     markExcludedFromBackup: @escaping (URL) throws -> Void =
       excludeAllowOffCacheURLFromBackup,
     fileManager: FileManager = .default,
+    legacyMigrationCreatedObserver: @escaping () -> Void = {},
     lockRetryObserver: @escaping () -> Void = {}
   ) {
     self.fileURL = fileURL
@@ -27,6 +28,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
       saltGenerator: saltGenerator,
       markExcludedFromBackup: markExcludedFromBackup,
       fileManager: fileManager,
+      legacyMigrationCreatedObserver: legacyMigrationCreatedObserver,
       lockRetryObserver: lockRetryObserver
     )
   }

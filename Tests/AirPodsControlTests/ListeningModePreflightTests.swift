@@ -151,6 +151,38 @@ struct ListeningModePreflightTests {
     )
   }
 
+  @Test("Filters default and explicit cycles with their intended order")
+  func filtersCycles() {
+    let available = ListeningMode.allCases
+
+    #expect(
+      ListeningModeCyclePolicy.supportedModes(requested: nil, available: available)
+        == [.transparency, .adaptive, .noiseCancellation],
+      "the default cycle excludes Off and keeps cycle order"
+    )
+    #expect(
+      ListeningModeCyclePolicy.supportedModes(
+        requested: nil,
+        available: [.off, .noiseCancellation, .transparency]
+      ) == [.transparency, .noiseCancellation],
+      "the default cycle skips Adaptive when the device lacks it"
+    )
+    #expect(
+      ListeningModeCyclePolicy.supportedModes(
+        requested: [.noiseCancellation, .off, .transparency],
+        available: available
+      ) == [.noiseCancellation, .off, .transparency],
+      "an explicit cycle preserves its requested order"
+    )
+    #expect(
+      ListeningModeCyclePolicy.supportedModes(
+        requested: [.noiseCancellation, .off, .transparency],
+        available: [.off, .transparency]
+      ) == [.off, .transparency],
+      "unsupported explicit modes are filtered in place"
+    )
+  }
+
   @Test("Only explicit Off operations opt into Allow Off policy")
   func offCommandPolicy() {
     #expect(

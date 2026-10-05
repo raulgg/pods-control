@@ -138,8 +138,10 @@ Keep changes with the layer that owns them:
 - `CLIOutput.swift` owns serialization.
 - `ListeningModePreflight.swift` owns pure availability and cycle policy.
 - `ListeningModeAllowOffCache.swift` owns the cache facade;
-  `ListeningModeAllowOffCachePolicy.swift` owns evidence decisions; and
-  `ListeningModeAllowOffCacheStorage.swift` owns persistence and file I/O.
+  `ListeningModeAllowOffCachePolicy.swift` owns evidence decisions;
+  `ListeningModeAllowOffCacheStorage.swift` owns persistence and file I/O;
+  and `ListeningModeAllowOffCacheLegacyMigration.swift` owns the one-time
+  legacy copy.
 
 Files this list does not name follow the same rule: keep a change in the
 file that already owns its concern.
@@ -200,7 +202,7 @@ format and check Markdown.
   to `revert:` and say what the wearer loses.
 - Use `chore:` for formatter-only pull requests; `style:` is unsupported by the
   PR title check.
-- Fill the pull request template. Put the reason in Why.
+- Fill the pull request template. Do not wrap the description to 80 columns.
 - Keep changes focused and explain the user-visible reason for them.
 - Add or update tests for behavior changes.
 - Update CLI help and the affected user-facing documentation when the interface

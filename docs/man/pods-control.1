@@ -294,9 +294,13 @@ does not access this cache or include its data. Missing or nonunique correlation
 .PP
 Positive and denial evidence expires seven days after observation. Use does not extend the lifetime, and macOS version changes do not invalidate or refresh it. Internal tombstones only order observations and appear as a miss. Newer evidence replaces older state. Missing, expired, unreadable, or malformed data is a miss. The disposable, backup-excluded file is stored at
 .BR ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json .
-If that file is missing, its bytes are copied from
+If that file is missing and
+.B ~/Library/Caches/io.github.raulgg.pods-control/
+does not exist yet, its bytes are copied from
 .BR ~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json
-when the older file exists. The older file is not deleted. A failed copy is a cache miss, not an operational error.
+when the older file exists. The copy leaves the older file in place and records
+.B allow-off-v1.migrated-to-pods-control
+beside it. A failed copy is a cache miss, not an operational error. Once the new directory or that marker exists, a missing cache file stays missing.
 Deleting it safely restores the pre-cache HAL behavior.
 .PP
 Any accepted Off request with definitive known non-Off bounded readback records denial. A rejected write, timeout, failed read, or unknown final state creates no denial.
