@@ -1,14 +1,14 @@
 ## Why
 
-One or two sentences. What is wrong or costly now, who hits it, and what stays wrong if this is not merged. Not a file list.
+<!-- One or two sentences. What is wrong or costly now, who hits it, and what stays wrong if this is not merged. Not a file list. -->
 
 ## Summary
 
-What changed. Shorter than reading the diff. The result, not a tour of every edit.
+<!-- What changed. Shorter than reading the diff. The result, not a tour of every edit. -->
 
 ## Testing
 
-List the commands you ran and any manual macOS or device checks.
+<!-- List the commands you ran and any manual macOS or device checks. -->
 
 ## Checklist
 
