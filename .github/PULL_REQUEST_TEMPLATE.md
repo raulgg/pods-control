@@ -1,6 +1,10 @@
+## Why
+
+One or two sentences. What is wrong or costly now, who hits it, and what stays wrong if this is not merged. Not a file list.
+
 ## Summary
 
-Describe the problem and the user-visible result.
+What changed. Shorter than reading the diff. The result, not a tour of every edit.
 
 ## Testing
 
