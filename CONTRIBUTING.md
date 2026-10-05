@@ -201,7 +201,7 @@ format and check Markdown.
 - Use `chore:` for formatter-only pull requests; `style:` is unsupported by the
   PR title check.
 - Fill the pull request template. Put the reason in Why.
-- Keep changes focused. Keep Summary shorter than the diff.
+- Keep changes focused and explain the user-visible reason for them.
 - Add or update tests for behavior changes.
 - Update CLI help and the affected user-facing documentation when the interface
   changes.
