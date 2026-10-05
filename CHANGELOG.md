@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/raulgg/pods-control/compare/v0.5.0...v0.6.0) (2026-10-05)
+
+
+### Features
+
+* cycle listening modes in the order given to --modes ([#154](https://github.com/raulgg/pods-control/issues/154)) ([ee33b13](https://github.com/raulgg/pods-control/commit/ee33b135446c1ede9e2df5c6a5f05930d776e1e8))
+* explain bad-args for repeated cycle modes and unknown tokens ([#157](https://github.com/raulgg/pods-control/issues/157)) ([1481f81](https://github.com/raulgg/pods-control/commit/1481f81380e9dc9e47302d4d7407bd7eb37ae3e4))
+
+
+### Bug Fixes
+
+* cycle listening modes in Apple's default order ([#152](https://github.com/raulgg/pods-control/issues/152)) ([4fcc89d](https://github.com/raulgg/pods-control/commit/4fcc89d046c12ba272b6484da4b0b11e1ef7ebd7))
+* reject a repeated mode in cycle --modes ([#155](https://github.com/raulgg/pods-control/issues/155)) ([d2c7bb0](https://github.com/raulgg/pods-control/commit/d2c7bb0a697a4a7109eefa8856c8f0e2ecd923de))
+
 ## [0.5.0](https://github.com/raulgg/airpods-control/compare/v0.4.0...v0.5.0) (2026-10-01)
 
 
