@@ -5,7 +5,7 @@ import Security
 
 let allowOffCacheDirectoryPermissions: mode_t = 0o700
 let allowOffCacheFilePermissions: mode_t = 0o600
-private let allowOffCacheProcessMutationLock = NSRecursiveLock()
+private let allowOffCacheProcessMutationLock = NSLock()
 private let allowOffCacheLockTimeoutNanoseconds: UInt64 = 250_000_000
 private let allowOffCacheLockRetryMicroseconds: useconds_t = 10_000
 let allowOffCacheDirectoryName = "io.github.raulgg.pods-control"
@@ -59,6 +59,12 @@ final class AllowOffCacheFileStorage {
 
   func readPersistedCache() -> PersistedAllowOffCacheRead {
     _ = importIfNeeded()
+    return decodePersistedCache()
+  }
+
+  /// Decode only. Callers inside `withExclusiveMutationLock` use this so the
+  /// process lock stays non-recursive. The locked section imports once first.
+  func decodePersistedCache() -> PersistedAllowOffCacheRead {
     switch secureRead(fileURL) {
     case .missing:
       return .missing
@@ -238,7 +244,6 @@ final class AllowOffCacheFileStorage {
   }
 
   private func ensureCacheDirectory() -> Bool {
-    guard importIfNeeded() else { return false }
     let attributes: [FileAttributeKey: Any] = [
       .posixPermissions: NSNumber(value: allowOffCacheDirectoryPermissions)
     ]

@@ -1062,6 +1062,18 @@ struct PersistentListeningModeAllowOffCacheTests {
         "a blocked copy leaves the new cache absent"
       )
       #expect(
+        migrated.applyObservation(
+          rawDeviceUID: rawUID,
+          allowsOff: true,
+          observedAt: clock.value
+        ) == .unavailable,
+        "a write waits while the legacy snapshot is untrusted"
+      )
+      #expect(
+        allowOffCacheLstat(newURL.deletingLastPathComponent()) == nil,
+        "a waiting write does not publish the new cache directory"
+      )
+      #expect(
         allowOffCachePermissions(at: externalURL) == 0o755,
         "an untrusted deny marker leaves its target mode unchanged"
       )

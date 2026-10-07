@@ -66,10 +66,15 @@ struct AllowOffCacheLegacyMigration {
     if !pathIsAbsent(directoryURL) {
       return stampExistingDirectoryIfTrusted(legacyDirectory: legacyDirectory)
     }
-    guard let legacy = readTrustedLegacyCache(dirfd: legacyDirectory) else {
+    switch readTrustedLegacyCache(dirfd: legacyDirectory) {
+    case .absent:
       return true
+    case .rejected:
+      // Leave the new directory unpublished so a later read can retry.
+      return false
+    case .value(let legacy):
+      return publishLegacyCache(legacy, legacyDirectory: legacyDirectory)
     }
-    return publishLegacyCache(legacy, legacyDirectory: legacyDirectory)
   }
 
   /// One result for a final path that already exists: stamp a trusted
@@ -213,6 +218,8 @@ struct AllowOffCacheLegacyMigration {
     ) {
     case .absent:
       return false
+    // A symlink, wrong mode, or oversized name is present. Treating it as
+    // finished keeps a purged cache from copying the legacy file again.
     case .rejected, .value:
       return true
     }
@@ -260,25 +267,37 @@ struct AllowOffCacheLegacyMigration {
     case failed
   }
 
-  private func readTrustedLegacyCache(
-    dirfd: Int32
-  ) -> LegacyAllowOffCacheSnapshot? {
-    guard case .value(let document, _) = readSibling(
+  private enum LegacySnapshotRead {
+    case absent
+    case rejected
+    case value(LegacyAllowOffCacheSnapshot)
+  }
+
+  private func readTrustedLegacyCache(dirfd: Int32) -> LegacySnapshotRead {
+    switch readSibling(
       dirfd: dirfd,
       name: allowOffCacheFileName,
       maximumByteCount: AllowOffCachePolicy.maximumByteCount
-    ) else { return nil }
-    guard let names = directoryEntryNames(dirfd: dirfd) else { return nil }
-    var markers: [LegacyDenyMarker] = []
-    for name in names where isLegacyDenyMarkerName(name) {
-      guard case .value(let bytes, _) = readSibling(
-        dirfd: dirfd,
-        name: name,
-        maximumByteCount: allowOffCacheDenyMarkerMaximumByteCount
-      ) else { return nil }
-      markers.append(LegacyDenyMarker(name: name, bytes: bytes))
+    ) {
+    case .absent:
+      return .absent
+    case .rejected:
+      return .rejected
+    case .value(let document, _):
+      guard let names = directoryEntryNames(dirfd: dirfd) else { return .rejected }
+      var markers: [LegacyDenyMarker] = []
+      for name in names where isLegacyDenyMarkerName(name) {
+        guard case .value(let bytes, _) = readSibling(
+          dirfd: dirfd,
+          name: name,
+          maximumByteCount: allowOffCacheDenyMarkerMaximumByteCount
+        ) else { return .rejected }
+        markers.append(LegacyDenyMarker(name: name, bytes: bytes))
+      }
+      return .value(
+        LegacyAllowOffCacheSnapshot(document: document, markers: markers)
+      )
     }
-    return LegacyAllowOffCacheSnapshot(document: document, markers: markers)
   }
 
   private func isLegacyDenyMarkerName(_ name: String) -> Bool {
