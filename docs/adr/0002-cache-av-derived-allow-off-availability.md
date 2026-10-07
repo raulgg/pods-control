@@ -85,11 +85,12 @@ when that older directory and file already meet the cache's ownership,
 mode, and regular-file checks. The copy records
 `allow-off-v1.migrated-to-pods-control` beside the older file and does
 not delete that file. The copy-or-stamp decision holds
-`allow-off-v1.migration.lock` in the legacy directory. A directory
-created by an in-progress copy is not a finished migration until the
-marker is written. A failed copy is a miss. Once the new directory
-or the marker exists, deleting the new cache file stays a miss and does
-not copy the legacy file again.
+`allow-off-v1.migration.lock` in the legacy directory. The copy is
+published by renaming a private directory, so the new directory appears
+only with its cache file and deny markers. The marker is written after
+that rename, and a failed marker write removes the directory. A failed
+copy is a miss. Once the new directory or the marker exists, deleting
+the new cache file stays a miss and does not copy the legacy file again.
 
 Each positive or denial record expires seven days after its observation. The
 lifetime is non-sliding: consuming a record does not refresh it. Internal

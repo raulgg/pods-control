@@ -300,7 +300,7 @@ does not exist yet, its bytes are copied from
 .BR ~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json
 when the older file exists. The copy leaves the older file in place and records
 .B allow-off-v1.migrated-to-pods-control
-beside it. A failed copy is a cache miss, not an operational error. Once the new directory or that marker exists, a missing cache file stays missing.
+beside it. The new directory appears only after that copy is complete. A failed copy is a cache miss, not an operational error. Once the new directory or that marker exists, a missing cache file stays missing.
 Deleting it safely restores the pre-cache HAL behavior.
 .PP
 Any accepted Off request with definitive known non-Off bounded readback records denial. A rejected write, timeout, failed read, or unknown final state creates no denial.

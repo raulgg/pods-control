@@ -335,6 +335,72 @@ struct PersistentListeningModeAllowOffCacheTests {
     }
   }
 
+  @Test("Publishes a legacy Allow Off copy only as a complete directory")
+  func allowOffCachePublishesCompleteDirectory() {
+    withAllowOffCacheRenameFixture { legacyURL, newURL in
+      let clock = AllowOffCacheTestClock(Date(timeIntervalSince1970: 1_700_000_005))
+      let legacy = PersistentListeningModeAllowOffCache(
+        fileURL: legacyURL,
+        now: clock.read,
+        saltGenerator: { allowOffCacheTestSalt }
+      )
+      let rawUID = "complete-publication-uid"
+      #expect(
+        legacy.applyObservation(
+          rawDeviceUID: rawUID,
+          allowsOff: true,
+          observedAt: clock.value
+        ) == .applied,
+        "legacy Allow Off evidence exists before publication"
+      )
+      let legacyDirectory = legacyURL.deletingLastPathComponent()
+      let denyName = "allow-off-v1-deny-abc.jsonl"
+      let denyMarker = legacyDirectory.appendingPathComponent(denyName)
+      do {
+        try Data("deny\n".utf8).write(to: denyMarker)
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o600)],
+          ofItemAtPath: denyMarker.path
+        )
+      } catch {
+        Issue.record("complete publication test seeds a deny marker")
+        return
+      }
+
+      let newDirectory = newURL.deletingLastPathComponent()
+      var publishedEarly = false
+      let migrated = PersistentListeningModeAllowOffCache(
+        fileURL: newURL,
+        now: clock.read,
+        saltGenerator: { Data(repeating: 9, count: 32) },
+        legacyMigrationCreatedObserver: {
+          if allowOffCacheLstat(newDirectory) != nil {
+            publishedEarly = true
+          }
+        }
+      )
+      guard allowOffRecord(from: migrated.lookup(rawDeviceUID: rawUID)) != nil else {
+        Issue.record("the published copy keeps the legacy Allow Off record")
+        return
+      }
+      #expect(!publishedEarly, "the final directory is absent until the copy is complete")
+      #expect(
+        FileManager.default.fileExists(
+          atPath: newDirectory.appendingPathComponent(denyName).path
+        ),
+        "the published directory includes the deny marker"
+      )
+      let parent = newDirectory.deletingLastPathComponent()
+      let names = (
+        try? FileManager.default.contentsOfDirectory(atPath: parent.path)
+      ) ?? []
+      #expect(
+        names.contains { $0.hasSuffix(".migrating") } == false,
+        "a finished copy leaves no private directory behind"
+      )
+    }
+  }
+
   @Test("Does not copy a legacy Allow Off cache again after the new one is removed")
   func allowOffCacheRemovalDoesNotRestoreLegacyEvidence() {
     withAllowOffCacheRenameFixture { legacyURL, newURL in

@@ -245,9 +245,10 @@ the cache file is copied from
 `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
 when that older directory and file already meet the cache's ownership,
 mode, and regular-file checks. The copy leaves the older file in place
-and records `allow-off-v1.migrated-to-pods-control` beside it. A failed
-copy is a cache miss, not an operational error. Once the new directory
-or that marker exists, a missing cache file stays missing.
+and records `allow-off-v1.migrated-to-pods-control` beside it. The new
+directory appears only after that copy is complete. A failed copy is a
+cache miss, not an operational error. Once the new directory or that
+marker exists, a missing cache file stays missing.
 
 The key is the full SHA-256 digest of a random per-cache salt followed by the
 exact, case-sensitive public Core Audio UID. The cache persists the salt,
