@@ -17,6 +17,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
     markExcludedFromBackup: @escaping (URL) throws -> Void =
       excludeAllowOffCacheURLFromBackup,
     fileManager: FileManager = .default,
+    legacyMigrationCreatedObserver: @escaping () -> Void = {},
     lockRetryObserver: @escaping () -> Void = {}
   ) {
     self.fileURL = fileURL
@@ -27,6 +28,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
       saltGenerator: saltGenerator,
       markExcludedFromBackup: markExcludedFromBackup,
       fileManager: fileManager,
+      legacyMigrationCreatedObserver: legacyMigrationCreatedObserver,
       lockRetryObserver: lockRetryObserver
     )
   }
@@ -199,7 +201,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
   }
 
   private func loadOrRecreateDocument() -> PersistedAllowOffCache? {
-    switch storage.readPersistedCache() {
+    switch storage.decodePersistedCache() {
     case .value(let value):
       return value
     case .missing:
@@ -358,7 +360,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
 
   func remove(record: AllowOffCacheRecord) -> AllowOffCacheMutation {
     return storage.withExclusiveMutationLock {
-      guard case .value(let document) = storage.readPersistedCache() else {
+      guard case .value(let document) = storage.decodePersistedCache() else {
         return purgeInvalidCacheIfNeeded()
       }
       return remove(
@@ -373,7 +375,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
     rawDeviceUID: String,
     observedAt: Date
   ) -> AllowOffCacheMutation {
-    guard case .value(let document) = storage.readPersistedCache(),
+    guard case .value(let document) = storage.decodePersistedCache(),
           let key = AllowOffCachePolicy.digestKey(
             salt: document.salt,
             rawDeviceUID: rawDeviceUID
@@ -424,7 +426,7 @@ final class PersistentListeningModeAllowOffCache: ListeningModeAllowOffCaching {
   }
 
   private func purgeInvalidCacheIfNeeded() -> AllowOffCacheMutation {
-    switch storage.readPersistedCache() {
+    switch storage.decodePersistedCache() {
     case .missing:
       return .unchanged
     case .invalid:

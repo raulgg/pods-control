@@ -284,13 +284,18 @@
 
 **Allow Off cache store**
 : The deliberately disposable, per-user, backup-excluded file at
-  `~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json`. A
-  missing file is copied once from
-  `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
-  when that older directory and file already meet the cache's ownership,
-  mode, and regular-file checks. The older file is left in place. Absence,
-  a failed copy, or removal by cache cleanup is a cache miss, not an
-  operational error.
+  `~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json`. While
+  that directory is absent, a trusted
+  `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json` is
+  copied once and `allow-off-v1.migrated-to-pods-control` is recorded
+  beside the older file. That copy-or-stamp decision holds
+  `allow-off-v1.migration.lock` in the legacy directory. The copy is
+  published by renaming a private directory, so the new directory appears
+  only with its cache file and deny markers. The marker is written after
+  that rename. A failed copy removes the private directory and does not
+  write the marker. The older cache file is left in place. Once the new
+  directory or the marker exists, absence, a failed copy, or removal by
+  cache cleanup is a cache miss, not an operational error.
 
 **Stale availability gap**
 : The interval after Allow Off changes outside this CLI and before a later live
