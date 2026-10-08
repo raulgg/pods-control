@@ -201,7 +201,9 @@ reports `unsupported`; rejection is `unavailable`, while an unreadable or
 timed-out final state is `no-op` and records no denial. See
 [the CLI reference](docs/cli.md#cached-allow-off-availability) and
 [ADR 0002](docs/adr/0002-cache-av-derived-allow-off-availability.md) for the
-evidence and invalidation rules.
+evidence and invalidation rules, and
+[ADR 0005](docs/adr/0005-copy-the-legacy-allow-off-cache-once.md) for the
+one-time legacy copy.
 
 The inventory starts with macOS's public list of available Core Audio devices.
 It accepts an ordinary, nonaggregate classic-Bluetooth endpoint when the

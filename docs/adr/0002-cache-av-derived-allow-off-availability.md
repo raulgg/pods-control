@@ -78,19 +78,14 @@ in:
 ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json
 ```
 
-While `~/Library/Caches/io.github.raulgg.pods-control/` is absent, a
-missing cache is copied from
+A missing file is copied from
 `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
 when that older directory and file already meet the cache's ownership,
-mode, and regular-file checks. The copy records
-`allow-off-v1.migrated-to-pods-control` beside the older file and does
-not delete that file. The copy-or-stamp decision holds
-`allow-off-v1.migration.lock` in the legacy directory. The copy is
-published by renaming a private directory, so the new directory appears
-only with its cache file and deny markers. The marker is written after
-that rename, and a failed marker write removes the directory. A failed
-copy is a miss. Once the new directory or the marker exists, deleting
-the new cache file stays a miss and does not copy the legacy file again.
+mode, and regular-file checks. The older file is not deleted in this
+version. A failed copy is a miss.
+
+[ADR 0005](0005-copy-the-legacy-allow-off-cache-once.md) supersedes this
+legacy-copy rule.
 
 Each positive or denial record expires seven days after its observation. The
 lifetime is non-sliding: consuming a record does not refresh it. Internal
