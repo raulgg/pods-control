@@ -244,8 +244,10 @@ If `~/Library/Caches/io.github.raulgg.pods-control/` does not exist yet,
 the cache file is copied from
 `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
 when that older directory and file already meet the cache's ownership,
-mode, and regular-file checks. The copy leaves the older file in place
-and records `allow-off-v1.migrated-to-pods-control` beside it. The new
+mode, and regular-file checks. The copy records
+`allow-off-v1.migrated-to-pods-control` beside the older file, then
+removes that file and any deny marker whose bytes match the new file.
+The migration marker and the migration lock stay. The new
 directory appears only after that copy is complete. A failed copy is a
 cache miss, not an operational error. Once the new directory or that
 marker exists, a missing cache file stays missing.

@@ -28,8 +28,11 @@ struct AllowOffCacheLegacyMigration {
   // directory, so it appears only with the cache file and every deny marker.
   // The marker is written after that rename, and a failed marker write removes
   // the directory. A file the reader would reject stays where it is, and a
-  // path this call did not create is never chmod'd. After the new directory
-  // or the marker exists, a missing file stays missing so a purge or deletion
+  // path this call did not create is never chmod'd. After the marker is
+  // recorded, a legacy cache file or deny marker is removed when its bytes
+  // match the new file of the same name. The migration marker, migration
+  // lock, and every other legacy name stay. After the new directory or the
+  // marker exists, a missing file stays missing so a purge or deletion
   // cannot restore stale evidence. A check that cannot tell whether the
   // marker exists leaves the new directory unpublished.
   func importIfNeeded() -> Bool {
@@ -105,7 +108,11 @@ struct AllowOffCacheLegacyMigration {
       return true
     }
     Darwin.close(currentDirectory)
-    return recordLegacyMigrationMarker(dirfd: legacyDirectory)
+    guard recordLegacyMigrationMarker(dirfd: legacyDirectory) else {
+      return false
+    }
+    retireByteIdenticalLegacyEvidence(legacyDirectory: legacyDirectory)
+    return true
   }
 
   private func publishLegacyCache(
@@ -152,8 +159,43 @@ struct AllowOffCacheLegacyMigration {
       removeDirectoryTree(directoryURL)
       return false
     }
+    retireByteIdenticalLegacyEvidence(legacyDirectory: legacyDirectory)
     published = true
     return true
+  }
+
+  /// The caller holds the legacy migration lock. A name is removed only when
+  /// both trusted reads still match and the legacy inode is unchanged.
+  private func retireByteIdenticalLegacyEvidence(legacyDirectory: Int32) {
+    guard let names = directoryEntryNames(dirfd: legacyDirectory),
+          let newDirectory = openTrustedDirectory(directoryURL)
+    else { return }
+    defer { Darwin.close(newDirectory) }
+    for name in names {
+      guard name == allowOffCacheFileName || isLegacyDenyMarkerName(name) else {
+        continue
+      }
+      let maximumByteCount = name == allowOffCacheFileName
+        ? AllowOffCachePolicy.maximumByteCount
+        : allowOffCacheDenyMarkerMaximumByteCount
+      guard case .value(let legacyBytes, let identity) = readSibling(
+        dirfd: legacyDirectory,
+        name: name,
+        maximumByteCount: maximumByteCount
+      ),
+        case .value(let newBytes, _) = readSibling(
+          dirfd: newDirectory,
+          name: name,
+          maximumByteCount: maximumByteCount
+        ),
+        legacyBytes == newBytes,
+        siblingIdentity(dirfd: legacyDirectory, name: name) == identity
+      else { continue }
+      let removed = name.withCString { cName in
+        Darwin.unlinkat(legacyDirectory, cName, 0)
+      }
+      if removed != 0, errno != ENOENT { continue }
+    }
   }
 
   private func installLegacySnapshot(
@@ -738,7 +780,13 @@ struct AllowOffCacheLegacyMigration {
 }
 
 private func directoryEntryNames(dirfd: Int32) -> [String]? {
-  let duplicate = Darwin.dup(dirfd)
+  // dup shares the directory offset, so a second listing would start at EOF.
+  // Opening "." starts this read at the first entry.
+  let duplicate = Darwin.openat(
+    dirfd,
+    ".",
+    O_RDONLY | O_DIRECTORY | O_CLOEXEC
+  )
   guard duplicate >= 0 else { return nil }
   guard let directory = Darwin.fdopendir(duplicate) else {
     Darwin.close(duplicate)

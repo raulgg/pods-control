@@ -293,7 +293,8 @@
   published by renaming a private directory, so the new directory appears
   only with its cache file and deny markers. The marker is written after
   that rename. A failed copy removes the private directory and does not
-  write the marker. The older cache file is left in place. Once the new
+  write the marker. A matching older cache file or deny marker is then
+  removed. The migration marker and the migration lock stay. Once the new
   directory or the marker exists, absence, a failed copy, or removal by
   cache cleanup is a cache miss, not an operational error.
 
