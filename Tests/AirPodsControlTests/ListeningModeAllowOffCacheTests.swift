@@ -250,7 +250,7 @@ struct PersistentListeningModeAllowOffCacheTests {
     }
   }
 
-  @Test("Copies a legacy Allow Off cache on miss and keeps the old file")
+  @Test("Copies a legacy Allow Off cache and removes the matching old files")
   func allowOffCacheCopiesLegacyFileOnMiss() {
     withAllowOffCacheRenameFixture { legacyURL, newURL in
       let clock = AllowOffCacheTestClock(Date(timeIntervalSince1970: 1_700_000_000))
@@ -309,8 +309,22 @@ struct PersistentListeningModeAllowOffCacheTests {
         "the new cache file is a byte copy"
       )
       #expect(
-        (try? Data(contentsOf: legacyURL)) == legacyData,
-        "migration does not delete or rewrite the legacy cache"
+        allowOffCacheLstat(legacyURL) == nil,
+        "a matching legacy cache is removed"
+      )
+      #expect(
+        allowOffCacheLstat(marker) == nil,
+        "a matching legacy deny marker is removed"
+      )
+      #expect(
+        FileManager.default.fileExists(atPath: lock.path),
+        "migration leaves the legacy lock file"
+      )
+      #expect(
+        (try? Data(contentsOf: legacyDirectory.appendingPathComponent(
+          allowOffCacheLegacyMigrationMarkerName
+        ))) == Data("1\n".utf8),
+        "migration keeps the completed-copy marker"
       )
       let newDirectory = newURL.deletingLastPathComponent()
       #expect(
@@ -331,6 +345,105 @@ struct PersistentListeningModeAllowOffCacheTests {
       #expect(
         allowOffRecord(from: migrated.lookup(rawDeviceUID: rawUID)) != nil,
         "later reads use the copied file"
+      )
+    }
+  }
+
+  @Test("Removes only legacy Allow Off names whose bytes match")
+  func allowOffCacheRetiresOnlyByteIdenticalLegacyNames() {
+    withAllowOffCacheRenameFixture { legacyURL, newURL in
+      let clock = AllowOffCacheTestClock(Date(timeIntervalSince1970: 1_700_000_002))
+      let legacy = PersistentListeningModeAllowOffCache(
+        fileURL: legacyURL,
+        now: clock.read,
+        saltGenerator: { allowOffCacheTestSalt }
+      )
+      let rawUID = "differing-legacy-cache-uid"
+      #expect(
+        legacy.applyObservation(
+          rawDeviceUID: rawUID,
+          allowsOff: true,
+          observedAt: clock.value
+        ) == .applied,
+        "a differing legacy cache starts from trusted evidence"
+      )
+      guard let legacyData = try? Data(contentsOf: legacyURL) else {
+        Issue.record("a differing legacy cache was written")
+        return
+      }
+      let legacyDirectory = legacyURL.deletingLastPathComponent()
+      let newDirectory = newURL.deletingLastPathComponent()
+      let denyName = "allow-off-v1-deny-abc.jsonl"
+      let denyBytes = Data("deny\n".utf8)
+      let otherURL = legacyDirectory.appendingPathComponent("notes.txt")
+      let different = Data("different-allow-off-cache".utf8)
+      do {
+        try denyBytes.write(to: legacyDirectory.appendingPathComponent(denyName))
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o600)],
+          ofItemAtPath: legacyDirectory.appendingPathComponent(denyName).path
+        )
+        try Data("keep\n".utf8).write(to: otherURL)
+        try FileManager.default.createDirectory(
+          at: newDirectory,
+          withIntermediateDirectories: false
+        )
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o700)],
+          ofItemAtPath: newDirectory.path
+        )
+        try different.write(to: newURL)
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o600)],
+          ofItemAtPath: newURL.path
+        )
+        try denyBytes.write(
+          to: newDirectory.appendingPathComponent(denyName)
+        )
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o600)],
+          ofItemAtPath: newDirectory.appendingPathComponent(denyName).path
+        )
+      } catch {
+        Issue.record("a differing legacy cache prepares both directories")
+        return
+      }
+
+      let migrated = PersistentListeningModeAllowOffCache(
+        fileURL: newURL,
+        now: clock.read,
+        saltGenerator: { Data(repeating: 9, count: 32) }
+      )
+      _ = migrated.lookup(rawDeviceUID: rawUID)
+      #expect(
+        (try? Data(contentsOf: legacyURL)) == legacyData,
+        "a differing legacy cache stays"
+      )
+      #expect(
+        allowOffCacheLstat(legacyDirectory.appendingPathComponent(denyName)) == nil,
+        "a matching legacy deny marker is removed"
+      )
+      #expect(
+        (try? Data(contentsOf: otherURL)) == Data("keep\n".utf8),
+        "an unrelated legacy name stays"
+      )
+      #expect(
+        (try? Data(contentsOf: newURL)) == different,
+        "retirement leaves the newer cache bytes"
+      )
+      #expect(
+        (try? Data(contentsOf: legacyDirectory.appendingPathComponent(
+          allowOffCacheLegacyMigrationMarkerName
+        ))) == Data("1\n".utf8),
+        "a differing cache still records the migration marker"
+      )
+      #expect(
+        FileManager.default.fileExists(
+          atPath: legacyDirectory.appendingPathComponent(
+            "allow-off-v1.migration.lock"
+          ).path
+        ),
+        "retirement leaves the migration lock"
       )
     }
   }
@@ -419,11 +532,6 @@ struct PersistentListeningModeAllowOffCacheTests {
         ) == .applied,
         "legacy Allow Off evidence exists before removal"
       )
-      guard let legacyData = try? Data(contentsOf: legacyURL) else {
-        Issue.record("legacy Allow Off cache was written")
-        return
-      }
-      let legacyMode = allowOffCachePermissions(at: legacyURL)
       let migrated = PersistentListeningModeAllowOffCache(
         fileURL: newURL,
         now: clock.read,
@@ -441,8 +549,8 @@ struct PersistentListeningModeAllowOffCacheTests {
         "migration records a private marker beside the legacy cache"
       )
       #expect(
-        allowOffCachePermissions(at: legacyURL) == legacyMode,
-        "migration does not chmod the legacy cache"
+        allowOffCacheLstat(legacyURL) == nil,
+        "a matching legacy cache is removed"
       )
 
       try? FileManager.default.removeItem(at: newURL)
@@ -455,8 +563,8 @@ struct PersistentListeningModeAllowOffCacheTests {
         "deleting the new cache file does not copy the legacy cache back"
       )
       #expect(
-        (try? Data(contentsOf: legacyURL)) == legacyData,
-        "deleting the new cache leaves the legacy bytes unchanged"
+        allowOffCacheLstat(legacyURL) == nil,
+        "the matching legacy cache stays removed"
       )
 
       try? FileManager.default.removeItem(at: newURL.deletingLastPathComponent())
@@ -493,10 +601,6 @@ struct PersistentListeningModeAllowOffCacheTests {
         ) == .applied,
         "legacy positive Allow Off evidence exists before the purge"
       )
-      guard let legacyData = try? Data(contentsOf: legacyURL) else {
-        Issue.record("legacy Allow Off cache was written")
-        return
-      }
       var failTemporaryBackup = false
       let migrated = PersistentListeningModeAllowOffCache(
         fileURL: newURL,
@@ -531,8 +635,8 @@ struct PersistentListeningModeAllowOffCacheTests {
         "the purge does not copy the legacy cache back"
       )
       #expect(
-        (try? Data(contentsOf: legacyURL)) == legacyData,
-        "the purge leaves the legacy cache unchanged"
+        allowOffCacheLstat(legacyURL) == nil,
+        "the matching legacy cache was removed before the purge"
       )
     }
   }
@@ -596,10 +700,6 @@ struct PersistentListeningModeAllowOffCacheTests {
         ) == .applied,
         "legacy Allow Off evidence exists before the new cache directory is deleted"
       )
-      guard let legacyData = try? Data(contentsOf: legacyURL) else {
-        Issue.record("legacy Allow Off cache was written")
-        return
-      }
       let migrated = PersistentListeningModeAllowOffCache(
         fileURL: newURL,
         now: clock.read,
@@ -628,8 +728,8 @@ struct PersistentListeningModeAllowOffCacheTests {
         "recreating the new cache directory does not copy the legacy cache back"
       )
       #expect(
-        (try? Data(contentsOf: legacyURL)) == legacyData,
-        "recreating the new cache directory leaves the legacy bytes unchanged"
+        allowOffCacheLstat(legacyURL) == nil,
+        "recreating the new cache directory does not restore the removed legacy file"
       )
     }
   }
@@ -707,8 +807,8 @@ struct PersistentListeningModeAllowOffCacheTests {
         "the waiting lookup still sees the legacy Allow Off record"
       )
       #expect(
-        (try? Data(contentsOf: legacyURL)) == legacyData,
-        "the waiting lookup leaves the legacy bytes unchanged"
+        allowOffCacheLstat(legacyURL) == nil,
+        "the copy removes the matching legacy cache before releasing the lock"
       )
       #expect(
         (try? Data(contentsOf: newURL)) == legacyData,

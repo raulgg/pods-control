@@ -83,8 +83,10 @@ missing cache is copied from
 `~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
 when that older directory and file already meet the cache's ownership,
 mode, and regular-file checks. The copy records
-`allow-off-v1.migrated-to-pods-control` beside the older file and does
-not delete that file. The copy-or-stamp decision holds
+`allow-off-v1.migrated-to-pods-control` beside the older file, then
+removes that file when its bytes match the new file. A differing older
+file stays. The migration marker and the migration lock stay. The
+copy-or-stamp decision holds
 `allow-off-v1.migration.lock` in the legacy directory. The copy is
 published by renaming a private directory, so the new directory appears
 only with its cache file and deny markers. The marker is written after
