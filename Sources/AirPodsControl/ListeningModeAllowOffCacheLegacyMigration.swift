@@ -30,14 +30,21 @@ struct AllowOffCacheLegacyMigration {
   // the directory. A file the reader would reject stays where it is, and a
   // path this call did not create is never chmod'd. After the new directory
   // or the marker exists, a missing file stays missing so a purge or deletion
-  // cannot restore stale evidence.
+  // cannot restore stale evidence. A check that cannot tell whether the
+  // marker exists leaves the new directory unpublished.
   func importIfNeeded() -> Bool {
     guard directoryURL.lastPathComponent == allowOffCacheDirectoryName,
           fileURL.lastPathComponent == allowOffCacheFileName
     else { return true }
     if pathIsAbsent(legacyDirectoryURL) { return true }
-    if legacyMigrationMarkerIsPresent() { return true }
-    return importWhileLocked()
+    switch legacyMigrationMarkerPresence() {
+    case .present:
+      return true
+    case .unreadable:
+      return false
+    case .absent:
+      return importWhileLocked()
+    }
   }
 
   private func importWhileLocked() -> Bool {
@@ -48,8 +55,14 @@ struct AllowOffCacheLegacyMigration {
       lockRetryObserver: lockRetryObserver
     )
     defer { allowOffCacheReleaseProcessMutationLock() }
-    guard let legacyDirectory = openTrustedDirectory(legacyDirectoryURL) else {
+    let legacyDirectory: Int32
+    switch openLegacyDirectory(legacyDirectoryURL) {
+    case .absent, .untrusted:
       return true
+    case .unreadable:
+      return false
+    case .opened(let descriptor):
+      legacyDirectory = descriptor
     }
     defer { Darwin.close(legacyDirectory) }
     guard let lockDescriptor = openMigrationLock(dirfd: legacyDirectory) else {
@@ -62,7 +75,14 @@ struct AllowOffCacheLegacyMigration {
     ) else { return false }
     defer { _ = Darwin.lockf(lockDescriptor, F_ULOCK, 0) }
 
-    if legacyMigrationMarkerIsPresent(dirfd: legacyDirectory) { return true }
+    switch legacyMigrationMarkerPresence(dirfd: legacyDirectory) {
+    case .present:
+      return true
+    case .unreadable:
+      return false
+    case .absent:
+      break
+    }
     if !pathIsAbsent(directoryURL) {
       return stampExistingDirectoryIfTrusted(legacyDirectory: legacyDirectory)
     }
@@ -170,12 +190,18 @@ struct AllowOffCacheLegacyMigration {
     return true
   }
 
-  private func legacyMigrationMarkerIsPresent() -> Bool {
-    guard let descriptor = openTrustedDirectory(legacyDirectoryURL) else {
-      return false
+  private func legacyMigrationMarkerPresence() -> MigrationMarkerPresence {
+    switch openLegacyDirectory(legacyDirectoryURL) {
+    case .opened(let descriptor):
+      defer { Darwin.close(descriptor) }
+      return legacyMigrationMarkerPresence(dirfd: descriptor)
+    case .absent:
+      return .absent
+    case .untrusted:
+      return .present
+    case .unreadable:
+      return .unreadable
     }
-    defer { Darwin.close(descriptor) }
-    return legacyMigrationMarkerIsPresent(dirfd: descriptor)
   }
 
   private func openMigrationLock(dirfd: Int32) -> Int32? {
@@ -210,18 +236,22 @@ struct AllowOffCacheLegacyMigration {
     return descriptor
   }
 
-  private func legacyMigrationMarkerIsPresent(dirfd: Int32) -> Bool {
+  private func legacyMigrationMarkerPresence(
+    dirfd: Int32
+  ) -> MigrationMarkerPresence {
     switch readSibling(
       dirfd: dirfd,
       name: allowOffCacheLegacyMigrationMarkerName,
       maximumByteCount: allowOffCacheLegacyMigrationMarkerBytes.count
     ) {
     case .absent:
-      return false
-    // A symlink, wrong mode, or oversized name is present. Treating it as
+      return .absent
+    // A symlink, wrong mode, or oversized file is present. Treating it as
     // finished keeps a purged cache from copying the legacy file again.
     case .rejected, .value:
-      return true
+      return .present
+    case .unreadable:
+      return .unreadable
     }
   }
 
@@ -236,7 +266,7 @@ struct AllowOffCacheLegacyMigration {
     case .created, .adopted:
       return true
     case .failed:
-      return legacyMigrationMarkerIsPresent(dirfd: dirfd)
+      return legacyMigrationMarkerPresence(dirfd: dirfd) == .present
     }
   }
 
@@ -258,7 +288,21 @@ struct AllowOffCacheLegacyMigration {
   private enum SiblingBytes {
     case absent
     case rejected
+    case unreadable
     case value(Data, AllowOffCacheFileIdentity)
+  }
+
+  private enum MigrationMarkerPresence {
+    case absent
+    case present
+    case unreadable
+  }
+
+  private enum LegacyDirectoryOpen {
+    case opened(Int32)
+    case absent
+    case untrusted
+    case unreadable
   }
 
   private enum ExclusiveInstall {
@@ -281,7 +325,7 @@ struct AllowOffCacheLegacyMigration {
     ) {
     case .absent:
       return .absent
-    case .rejected:
+    case .rejected, .unreadable:
       return .rejected
     case .value(let document, _):
       guard let names = directoryEntryNames(dirfd: dirfd) else { return .rejected }
@@ -380,7 +424,7 @@ struct AllowOffCacheLegacyMigration {
       name: name,
       maximumByteCount: maximumByteCount
     ) {
-    case .rejected:
+    case .rejected, .unreadable:
       return .failed
     case .value(let existing, let identity):
       return existing == bytes ? .adopted(identity) : .failed
@@ -469,26 +513,41 @@ struct AllowOffCacheLegacyMigration {
   ) -> SiblingBytes {
     var openError = Int32(0)
     let descriptor = name.withCString { cName -> Int32 in
-      let opened = Darwin.openat(
-        dirfd,
-        cName,
-        O_RDONLY | O_NOFOLLOW | O_CLOEXEC
-      )
-      if opened < 0 { openError = errno }
-      return opened
+      while true {
+        let opened = Darwin.openat(
+          dirfd,
+          cName,
+          O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+        )
+        if opened >= 0 { return opened }
+        let error = errno
+        if error == EINTR { continue }
+        openError = error
+        return opened
+      }
     }
     if descriptor < 0 {
-      return openError == ENOENT ? .absent : .rejected
+      switch openError {
+      case ENOENT:
+        return .absent
+      case ELOOP:
+        return .rejected
+      default:
+        return .unreadable
+      }
     }
     defer { Darwin.close(descriptor) }
     var value = stat()
-    guard Darwin.fstat(descriptor, &value) == 0,
-          isTrustedOwnedUnsharedRegularFile(value),
+    guard Darwin.fstat(descriptor, &value) == 0 else { return .unreadable }
+    guard isTrustedOwnedUnsharedRegularFile(value),
           value.st_size >= 0,
           value.st_size <= off_t(maximumByteCount),
-          permissionBits(value) == allowOffCacheFilePermissions,
-          let bytes = readExact(descriptor: descriptor, size: Int(value.st_size))
+          permissionBits(value) == allowOffCacheFilePermissions
     else { return .rejected }
+    guard let bytes = readExact(
+      descriptor: descriptor,
+      size: Int(value.st_size)
+    ) else { return .unreadable }
     return .value(
       bytes,
       AllowOffCacheFileIdentity(device: value.st_dev, inode: value.st_ino)
@@ -561,6 +620,49 @@ struct AllowOffCacheLegacyMigration {
     _ = name.withCString { cName in
       Darwin.unlinkat(dirfd, cName, 0)
     }
+  }
+
+  private func openLegacyDirectory(_ url: URL) -> LegacyDirectoryOpen {
+    var openError = Int32(0)
+    let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+      guard let path else {
+        openError = EINVAL
+        return -1
+      }
+      while true {
+        let opened = Darwin.open(
+          path,
+          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        if opened >= 0 { return opened }
+        let error = errno
+        if error == EINTR { continue }
+        openError = error
+        return -1
+      }
+    }
+    if descriptor < 0 {
+      switch openError {
+      case ENOENT:
+        return .absent
+      case ELOOP, ENOTDIR:
+        return .untrusted
+      default:
+        return .unreadable
+      }
+    }
+    var value = stat()
+    guard Darwin.fstat(descriptor, &value) == 0 else {
+      Darwin.close(descriptor)
+      return .unreadable
+    }
+    guard isTrustedOwnedDirectory(value),
+          permissionBits(value) == allowOffCacheDirectoryPermissions
+    else {
+      Darwin.close(descriptor)
+      return .untrusted
+    }
+    return .opened(descriptor)
   }
 
   private func openTrustedDirectory(_ url: URL) -> Int32? {
