@@ -84,6 +84,9 @@ when that older directory and file already meet the cache's ownership,
 mode, and regular-file checks. The older file is not deleted in this
 version. A failed copy is a miss.
 
+[ADR 0005](0005-copy-the-legacy-allow-off-cache-once.md) supersedes this
+legacy-copy rule.
+
 Each positive or denial record expires seven days after its observation. The
 lifetime is non-sliding: consuming a record does not refresh it. Internal
 tombstones only order observations and are exposed as a miss, not a denial. New

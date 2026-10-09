@@ -3,18 +3,20 @@ import Dispatch
 import Foundation
 import Security
 
-private let allowOffCacheDirectoryPermissions: mode_t = 0o700
-private let allowOffCacheFilePermissions: mode_t = 0o600
+let allowOffCacheDirectoryPermissions: mode_t = 0o700
+let allowOffCacheFilePermissions: mode_t = 0o600
 private let allowOffCacheProcessMutationLock = NSLock()
 private let allowOffCacheLockTimeoutNanoseconds: UInt64 = 250_000_000
 private let allowOffCacheLockRetryMicroseconds: useconds_t = 10_000
 let allowOffCacheDirectoryName = "io.github.raulgg.pods-control"
 let allowOffCacheLegacyDirectoryName = "io.github.raulgg.airpods-control"
 let allowOffCacheFileName = "allow-off-v1.json"
-private let allowOffCacheDenyMarkerPrefix = "allow-off-v1-deny-"
-private let allowOffCacheDenyMarkerSuffix = ".jsonl"
-private let allowOffCacheDenyMarkerMaximumByteCount = 4_096
-private let allowOffCacheReadBufferByteCount = 4_096
+let allowOffCacheLegacyMigrationMarkerName =
+  "allow-off-v1.migrated-to-pods-control"
+let allowOffCacheDenyMarkerPrefix = "allow-off-v1-deny-"
+let allowOffCacheDenyMarkerSuffix = ".jsonl"
+let allowOffCacheDenyMarkerMaximumByteCount = 4_096
+let allowOffCacheReadBufferByteCount = 4_096
 
 private enum AllowOffCacheStorageError: Error {
   case systemFailure
@@ -25,6 +27,7 @@ final class AllowOffCacheFileStorage {
   private let saltGenerator: () throws -> Data
   private let markExcludedFromBackup: (URL) throws -> Void
   private let fileManager: FileManager
+  private let legacyMigrationCreatedObserver: () -> Void
   private let lockRetryObserver: () -> Void
 
   init(
@@ -32,12 +35,14 @@ final class AllowOffCacheFileStorage {
     saltGenerator: @escaping () throws -> Data,
     markExcludedFromBackup: @escaping (URL) throws -> Void,
     fileManager: FileManager,
+    legacyMigrationCreatedObserver: @escaping () -> Void,
     lockRetryObserver: @escaping () -> Void
   ) {
     self.fileURL = fileURL
     self.saltGenerator = saltGenerator
     self.markExcludedFromBackup = markExcludedFromBackup
     self.fileManager = fileManager
+    self.legacyMigrationCreatedObserver = legacyMigrationCreatedObserver
     self.lockRetryObserver = lockRetryObserver
   }
 
@@ -53,7 +58,13 @@ final class AllowOffCacheFileStorage {
   }
 
   func readPersistedCache() -> PersistedAllowOffCacheRead {
-    importLegacyAllowOffCacheIfNeeded()
+    _ = importIfNeeded()
+    return decodePersistedCache()
+  }
+
+  /// Decode only. Callers inside `withExclusiveMutationLock` use this so the
+  /// process lock stays non-recursive. The locked section imports once first.
+  func decodePersistedCache() -> PersistedAllowOffCacheRead {
     switch secureRead(fileURL) {
     case .missing:
       return .missing
@@ -202,13 +213,17 @@ final class AllowOffCacheFileStorage {
     body: () -> AllowOffCacheMutation,
     onLockUnavailable: () -> AllowOffCacheMutation = { .unavailable }
   ) -> AllowOffCacheMutation {
-    allowOffCacheProcessMutationLock.lock()
-    defer { allowOffCacheProcessMutationLock.unlock() }
+    guard importIfNeeded() else { return .unavailable }
+    allowOffCacheAcquireProcessMutationLock()
+    defer { allowOffCacheReleaseProcessMutationLock() }
     guard ensureCacheDirectory(), let descriptor = openLockFile() else {
       return .unavailable
     }
     defer { Darwin.close(descriptor) }
-    guard acquireFileLock(descriptor) else { return onLockUnavailable() }
+    guard acquireAllowOffCacheFileLock(
+      descriptor,
+      lockRetryObserver: lockRetryObserver
+    ) else { return onLockUnavailable() }
     defer { _ = Darwin.lockf(descriptor, F_ULOCK, 0) }
     return body()
   }
@@ -226,27 +241,6 @@ final class AllowOffCacheFileStorage {
       "\(allowOffCacheDenyMarkerPrefix)\(key)\(allowOffCacheDenyMarkerSuffix)",
       isDirectory: false
     )
-  }
-
-  private func acquireFileLock(_ descriptor: Int32) -> Bool {
-    let startedAt = DispatchTime.now().uptimeNanoseconds
-    while true {
-      if Darwin.lockf(descriptor, F_TLOCK, 0) == 0 { return true }
-      guard errno == EACCES || errno == EAGAIN || errno == EINTR else {
-        return false
-      }
-
-      lockRetryObserver()
-      let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
-      guard elapsed < allowOffCacheLockTimeoutNanoseconds else { return false }
-      let remainingMicroseconds =
-        (allowOffCacheLockTimeoutNanoseconds - elapsed) / 1_000
-      _ = Darwin.usleep(
-        useconds_t(
-          min(UInt64(allowOffCacheLockRetryMicroseconds), remainingMicroseconds)
-        )
-      )
-    }
   }
 
   private func ensureCacheDirectory() -> Bool {
@@ -359,430 +353,13 @@ final class AllowOffCacheFileStorage {
     return .value(data)
   }
 
-  private func writeAll(_ data: Data, to descriptor: Int32) -> Bool {
-    data.withUnsafeBytes { bytes in
-      guard let baseAddress = bytes.baseAddress else { return true }
-      var written = 0
-      while written < bytes.count {
-        let count = Darwin.write(
-          descriptor,
-          baseAddress.advanced(by: written),
-          bytes.count - written
-        )
-        if count < 0 {
-          if errno == EINTR { continue }
-          return false
-        }
-        guard count > 0 else { return false }
-        written += count
-      }
-      return true
-    }
-  }
-
-  // Copies a trusted legacy cache. A file the reader would reject stays
-  // where it is, and a path this call did not create is never chmod'd.
-  private func importLegacyAllowOffCacheIfNeeded() {
-    guard directoryURL.lastPathComponent == allowOffCacheDirectoryName,
-          fileURL.lastPathComponent == allowOffCacheFileName,
-          pathIsAbsent(fileURL)
-    else { return }
-    let legacyDirectoryURL = directoryURL
-      .deletingLastPathComponent()
-      .appendingPathComponent(
-        allowOffCacheLegacyDirectoryName,
-        isDirectory: true
-      )
-    guard let legacyDirectory = openTrustedDirectory(legacyDirectoryURL) else {
-      return
-    }
-    defer { Darwin.close(legacyDirectory) }
-    guard let legacy = readTrustedLegacyCache(dirfd: legacyDirectory) else {
-      return
-    }
-    guard let destination = openNewCacheDirectory() else { return }
-    defer { Darwin.close(destination) }
-
-    var created: [CreatedAllowOffCacheFile] = []
-    switch installExclusiveSibling(
-      dirfd: destination,
-      name: allowOffCacheFileName,
-      bytes: legacy.document,
-      maximumByteCount: AllowOffCachePolicy.maximumByteCount
-    ) {
-    case .failed:
-      return
-    case .adopted:
-      break
-    case .created(let identity):
-      created.append(
-        CreatedAllowOffCacheFile(name: allowOffCacheFileName, identity: identity)
-      )
-    }
-    for marker in legacy.markers {
-      switch installExclusiveSibling(
-        dirfd: destination,
-        name: marker.name,
-        bytes: marker.bytes,
-        maximumByteCount: allowOffCacheDenyMarkerMaximumByteCount
-      ) {
-      case .failed:
-        removeCreatedFiles(dirfd: destination, created)
-        return
-      case .adopted:
-        break
-      case .created(let identity):
-        created.append(
-          CreatedAllowOffCacheFile(name: marker.name, identity: identity)
-        )
-      }
-    }
-    guard excludeVerifiedDirectoryFromBackup(dirfd: destination) else {
-      removeCreatedFiles(dirfd: destination, created)
-      return
-    }
-  }
-
-  private struct AllowOffCacheFileIdentity: Equatable {
-    var device: dev_t
-    var inode: ino_t
-  }
-
-  private struct LegacyDenyMarker {
-    var name: String
-    var bytes: Data
-  }
-
-  private struct LegacyAllowOffCacheSnapshot {
-    var document: Data
-    var markers: [LegacyDenyMarker]
-  }
-
-  private struct CreatedAllowOffCacheFile {
-    var name: String
-    var identity: AllowOffCacheFileIdentity
-  }
-
-  private enum SiblingBytes {
-    case absent
-    case rejected
-    case value(Data, AllowOffCacheFileIdentity)
-  }
-
-  private enum ExclusiveInstall {
-    case created(AllowOffCacheFileIdentity)
-    case adopted(AllowOffCacheFileIdentity)
-    case failed
-  }
-
-  private enum DirectoryCreation {
-    case created
-    case exists
-    case failed
-  }
-
-  private func readTrustedLegacyCache(
-    dirfd: Int32
-  ) -> LegacyAllowOffCacheSnapshot? {
-    guard case .value(let document, _) = readSibling(
-      dirfd: dirfd,
-      name: allowOffCacheFileName,
-      maximumByteCount: AllowOffCachePolicy.maximumByteCount
-    ) else { return nil }
-    guard let names = directoryEntryNames(dirfd: dirfd) else { return nil }
-    var markers: [LegacyDenyMarker] = []
-    for name in names where isLegacyDenyMarkerName(name) {
-      guard case .value(let bytes, _) = readSibling(
-        dirfd: dirfd,
-        name: name,
-        maximumByteCount: allowOffCacheDenyMarkerMaximumByteCount
-      ) else { return nil }
-      markers.append(LegacyDenyMarker(name: name, bytes: bytes))
-    }
-    return LegacyAllowOffCacheSnapshot(document: document, markers: markers)
-  }
-
-  private func isLegacyDenyMarkerName(_ name: String) -> Bool {
-    guard name.hasPrefix(allowOffCacheDenyMarkerPrefix),
-          name.hasSuffix(allowOffCacheDenyMarkerSuffix)
-    else { return false }
-    return name.count
-      > allowOffCacheDenyMarkerPrefix.count + allowOffCacheDenyMarkerSuffix.count
-  }
-
-  private func openNewCacheDirectory() -> Int32? {
-    let creation = makeCacheDirectory()
-    guard creation != .failed else { return nil }
-    let descriptor = openFile(
-      directoryURL,
-      flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-    )
-    guard descriptor >= 0 else { return nil }
-    var value = stat()
-    guard Darwin.fstat(descriptor, &value) == 0,
-          isTrustedOwnedDirectory(value)
-    else {
-      Darwin.close(descriptor)
-      return nil
-    }
-    if creation == .created {
-      guard Darwin.fchmod(descriptor, allowOffCacheDirectoryPermissions) == 0 else {
-        Darwin.close(descriptor)
-        return nil
-      }
-    } else if permissionBits(value) != allowOffCacheDirectoryPermissions {
-      Darwin.close(descriptor)
-      return nil
-    }
-    return descriptor
-  }
-
-  private func makeCacheDirectory() -> DirectoryCreation {
-    var error = Int32(0)
-    let created = directoryURL.withUnsafeFileSystemRepresentation { path -> Bool in
-      guard let path else {
-        error = EINVAL
-        return false
-      }
-      if Darwin.mkdir(path, allowOffCacheDirectoryPermissions) == 0 {
-        return true
-      }
-      error = errno
-      return false
-    }
-    if created { return .created }
-    return error == EEXIST ? .exists : .failed
-  }
-
-  private func installExclusiveSibling(
-    dirfd: Int32,
-    name: String,
-    bytes: Data,
-    maximumByteCount: Int
-  ) -> ExclusiveInstall {
-    switch readSibling(
-      dirfd: dirfd,
-      name: name,
-      maximumByteCount: maximumByteCount
-    ) {
-    case .rejected:
-      return .failed
-    case .value(let existing, let identity):
-      return existing == bytes ? .adopted(identity) : .failed
-    case .absent:
-      break
-    }
-
-    let temporaryName = ".allow-off-v1.\(UUID().uuidString).tmp"
-    let descriptor = temporaryName.withCString { temporary in
-      Darwin.openat(
-        dirfd,
-        temporary,
-        O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW,
-        allowOffCacheFilePermissions
-      )
-    }
-    guard descriptor >= 0 else { return .failed }
-    guard writeAll(bytes, to: descriptor), restrictAndSync(descriptor) else {
-      Darwin.close(descriptor)
-      unlinkSibling(dirfd: dirfd, name: temporaryName)
-      return .failed
-    }
-    var written = stat()
-    guard Darwin.fstat(descriptor, &written) == 0 else {
-      Darwin.close(descriptor)
-      unlinkSibling(dirfd: dirfd, name: temporaryName)
-      return .failed
-    }
-    let identity = AllowOffCacheFileIdentity(
-      device: written.st_dev,
-      inode: written.st_ino
-    )
-    Darwin.close(descriptor)
-
-    var renameError = Int32(0)
-    let renamed = temporaryName.withCString { temporary in
-      name.withCString { final -> Bool in
-        if Darwin.renameatx_np(
-          dirfd,
-          temporary,
-          dirfd,
-          final,
-          UInt32(RENAME_EXCL)
-        ) == 0 { return true }
-        renameError = errno
-        return false
-      }
-    }
-    if !renamed {
-      unlinkSibling(dirfd: dirfd, name: temporaryName)
-      guard renameError == EEXIST,
-            case .value(let existing, let existingIdentity) = readSibling(
-              dirfd: dirfd,
-              name: name,
-              maximumByteCount: maximumByteCount
-            ),
-            existing == bytes
-      else { return .failed }
-      return .adopted(existingIdentity)
-    }
-
-    guard case .value(let installed, let installedIdentity) = readSibling(
-      dirfd: dirfd,
-      name: name,
-      maximumByteCount: maximumByteCount
-    ),
-      installed == bytes,
-      installedIdentity == identity,
-      excludeBackupIfUnchanged(
-        directoryURL.appendingPathComponent(name, isDirectory: false),
-        dirfd: dirfd,
-        name: name,
-        identity: identity
-      )
-    else {
-      removeIfIdentityMatches(dirfd: dirfd, name: name, identity: identity)
-      return .failed
-    }
-    return .created(identity)
-  }
-
-  private func readSibling(
-    dirfd: Int32,
-    name: String,
-    maximumByteCount: Int
-  ) -> SiblingBytes {
-    var openError = Int32(0)
-    let descriptor = name.withCString { cName -> Int32 in
-      let opened = Darwin.openat(
-        dirfd,
-        cName,
-        O_RDONLY | O_NOFOLLOW | O_CLOEXEC
-      )
-      if opened < 0 { openError = errno }
-      return opened
-    }
-    if descriptor < 0 {
-      return openError == ENOENT ? .absent : .rejected
-    }
-    defer { Darwin.close(descriptor) }
-    var value = stat()
-    guard Darwin.fstat(descriptor, &value) == 0,
-          isTrustedOwnedUnsharedRegularFile(value),
-          value.st_size >= 0,
-          value.st_size <= off_t(maximumByteCount),
-          permissionBits(value) == allowOffCacheFilePermissions,
-          let bytes = readExact(descriptor: descriptor, size: Int(value.st_size))
-    else { return .rejected }
-    return .value(
-      bytes,
-      AllowOffCacheFileIdentity(device: value.st_dev, inode: value.st_ino)
-    )
-  }
-
-  private func excludeBackupIfUnchanged(
-    _ url: URL,
-    dirfd: Int32,
-    name: String,
-    identity: AllowOffCacheFileIdentity
-  ) -> Bool {
-    guard siblingIdentity(dirfd: dirfd, name: name) == identity else {
-      return false
-    }
-    do {
-      try markExcludedFromBackup(url)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private func excludeVerifiedDirectoryFromBackup(dirfd: Int32) -> Bool {
-    var descriptorStatus = stat()
-    guard Darwin.fstat(dirfd, &descriptorStatus) == 0,
-          let pathStatus = status(of: directoryURL),
-          pathStatus.st_dev == descriptorStatus.st_dev,
-          pathStatus.st_ino == descriptorStatus.st_ino,
-          isTrustedOwnedDirectory(pathStatus),
-          permissionBits(pathStatus) == allowOffCacheDirectoryPermissions
-    else { return false }
-    do {
-      try markExcludedFromBackup(directoryURL)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private func siblingIdentity(
-    dirfd: Int32,
-    name: String
-  ) -> AllowOffCacheFileIdentity? {
-    let descriptor = name.withCString { cName in
-      Darwin.openat(dirfd, cName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    }
-    guard descriptor >= 0 else { return nil }
-    defer { Darwin.close(descriptor) }
-    var value = stat()
-    guard Darwin.fstat(descriptor, &value) == 0,
-          isTrustedOwnedUnsharedRegularFile(value)
-    else { return nil }
-    return AllowOffCacheFileIdentity(device: value.st_dev, inode: value.st_ino)
-  }
-
-  private func removeCreatedFiles(
-    dirfd: Int32,
-    _ files: [CreatedAllowOffCacheFile]
-  ) {
-    for file in files {
-      removeIfIdentityMatches(
-        dirfd: dirfd,
-        name: file.name,
-        identity: file.identity
-      )
-    }
-  }
-
-  private func removeIfIdentityMatches(
-    dirfd: Int32,
-    name: String,
-    identity: AllowOffCacheFileIdentity
-  ) {
-    guard siblingIdentity(dirfd: dirfd, name: name) == identity else { return }
-    unlinkSibling(dirfd: dirfd, name: name)
-  }
-
-  private func unlinkSibling(dirfd: Int32, name: String) {
-    _ = name.withCString { cName in
-      Darwin.unlinkat(dirfd, cName, 0)
-    }
-  }
-
-  private func openTrustedDirectory(_ url: URL) -> Int32? {
-    let descriptor = openFile(
-      url,
-      flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-    )
-    guard descriptor >= 0 else { return nil }
-    var value = stat()
-    guard Darwin.fstat(descriptor, &value) == 0,
-          isTrustedOwnedDirectory(value),
-          permissionBits(value) == allowOffCacheDirectoryPermissions
-    else {
-      Darwin.close(descriptor)
-      return nil
-    }
-    return descriptor
-  }
-
-  private func pathIsAbsent(_ url: URL) -> Bool {
-    var absent = false
-    url.withUnsafeFileSystemRepresentation { path in
-      guard let path else { return }
-      var value = stat()
-      absent = Darwin.lstat(path, &value) != 0 && errno == ENOENT
-    }
-    return absent
+  private func importIfNeeded() -> Bool {
+    AllowOffCacheLegacyMigration(
+      fileURL: fileURL,
+      markExcludedFromBackup: markExcludedFromBackup,
+      legacyMigrationCreatedObserver: legacyMigrationCreatedObserver,
+      lockRetryObserver: lockRetryObserver
+    ).importIfNeeded()
   }
 }
 
@@ -800,62 +377,71 @@ func excludeAllowOffCacheURLFromBackup(_ url: URL) throws {
   try mutableURL.setResourceValues(values)
 }
 
-private func directoryEntryNames(dirfd: Int32) -> [String]? {
-  let duplicate = Darwin.dup(dirfd)
-  guard duplicate >= 0 else { return nil }
-  guard let directory = Darwin.fdopendir(duplicate) else {
-    Darwin.close(duplicate)
-    return nil
+func allowOffCacheAcquireProcessMutationLock(
+  reportingWaits: Bool = false,
+  lockRetryObserver: () -> Void = {}
+) {
+  if reportingWaits {
+    while !allowOffCacheProcessMutationLock.lock(
+      before: Date(timeIntervalSinceNow: 0.01)
+    ) {
+      lockRetryObserver()
+    }
+  } else {
+    allowOffCacheProcessMutationLock.lock()
   }
-  defer { Darwin.closedir(directory) }
-  var names: [String] = []
+}
+
+func allowOffCacheReleaseProcessMutationLock() {
+  allowOffCacheProcessMutationLock.unlock()
+}
+
+func acquireAllowOffCacheFileLock(
+  _ descriptor: Int32,
+  lockRetryObserver: () -> Void
+) -> Bool {
+  let startedAt = DispatchTime.now().uptimeNanoseconds
   while true {
-    errno = 0
-    guard let entry = Darwin.readdir(directory) else {
-      return errno == 0 ? names : nil
+    if Darwin.lockf(descriptor, F_TLOCK, 0) == 0 { return true }
+    guard errno == EACCES || errno == EAGAIN || errno == EINTR else {
+      return false
     }
-    let name = directoryEntryName(entry)
-    if name != "." && name != ".." {
-      names.append(name)
-    }
+
+    lockRetryObserver()
+    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+    guard elapsed < allowOffCacheLockTimeoutNanoseconds else { return false }
+    let remainingMicroseconds =
+      (allowOffCacheLockTimeoutNanoseconds - elapsed) / 1_000
+    _ = Darwin.usleep(
+      useconds_t(
+        min(UInt64(allowOffCacheLockRetryMicroseconds), remainingMicroseconds)
+      )
+    )
   }
 }
 
-private func directoryEntryName(
-  _ entry: UnsafeMutablePointer<dirent>
-) -> String {
-  let length = Int(entry.pointee.d_namlen)
-  return withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-    let end = min(max(length, 0), bytes.count)
-    return String(decoding: bytes.prefix(end), as: UTF8.self)
+func writeAll(_ data: Data, to descriptor: Int32) -> Bool {
+  data.withUnsafeBytes { bytes in
+    guard let baseAddress = bytes.baseAddress else { return true }
+    var written = 0
+    while written < bytes.count {
+      let count = Darwin.write(
+        descriptor,
+        baseAddress.advanced(by: written),
+        bytes.count - written
+      )
+      if count < 0 {
+        if errno == EINTR { continue }
+        return false
+      }
+      guard count > 0 else { return false }
+      written += count
+    }
+    return true
   }
 }
 
-private func readExact(descriptor: Int32, size: Int) -> Data? {
-  guard size >= 0 else { return nil }
-  var data = Data()
-  data.reserveCapacity(size)
-  var remaining = size
-  var buffer = [UInt8](
-    repeating: 0,
-    count: min(max(size, 1), allowOffCacheReadBufferByteCount)
-  )
-  while remaining > 0 {
-    let count = buffer.withUnsafeMutableBytes { bytes in
-      Darwin.read(descriptor, bytes.baseAddress, min(bytes.count, remaining))
-    }
-    if count < 0 {
-      if errno == EINTR { continue }
-      return nil
-    }
-    if count == 0 { return nil }
-    data.append(buffer, count: count)
-    remaining -= count
-  }
-  return data
-}
-
-private func status(of url: URL) -> stat? {
+func status(of url: URL) -> stat? {
   var value = stat()
   let result: Int32 = url.withUnsafeFileSystemRepresentation { path in
     guard let path else { return Int32(-1) }
@@ -872,24 +458,24 @@ private func isRegularFile(_ value: stat) -> Bool {
   value.st_mode & S_IFMT == S_IFREG
 }
 
-private func isTrustedOwnedDirectory(_ value: stat) -> Bool {
+func isTrustedOwnedDirectory(_ value: stat) -> Bool {
   isDirectory(value) && value.st_uid == geteuid()
 }
 
-private func isTrustedOwnedUnsharedRegularFile(_ value: stat) -> Bool {
+func isTrustedOwnedUnsharedRegularFile(_ value: stat) -> Bool {
   isRegularFile(value) && value.st_uid == geteuid() && value.st_nlink == 1
 }
 
-private func restrictAndSync(_ descriptor: Int32) -> Bool {
+func restrictAndSync(_ descriptor: Int32) -> Bool {
   fchmod(descriptor, allowOffCacheFilePermissions) == 0
     && fsync(descriptor) == 0
 }
 
-private func permissionBits(_ value: stat) -> mode_t {
+func permissionBits(_ value: stat) -> mode_t {
   value.st_mode & mode_t(0o777)
 }
 
-private func openFile(
+func openFile(
   _ url: URL,
   flags: Int32,
   permissions: mode_t = 0

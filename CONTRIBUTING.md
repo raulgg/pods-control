@@ -138,8 +138,10 @@ Keep changes with the layer that owns them:
 - `CLIOutput.swift` owns serialization.
 - `ListeningModePreflight.swift` owns pure availability and cycle policy.
 - `ListeningModeAllowOffCache.swift` owns the cache facade;
-  `ListeningModeAllowOffCachePolicy.swift` owns evidence decisions; and
-  `ListeningModeAllowOffCacheStorage.swift` owns persistence and file I/O.
+  `ListeningModeAllowOffCachePolicy.swift` owns evidence decisions;
+  `ListeningModeAllowOffCacheStorage.swift` owns persistence and file I/O;
+  and `ListeningModeAllowOffCacheLegacyMigration.swift` owns the one-time
+  legacy copy.
 
 Files this list does not name follow the same rule: keep a change in the
 file that already owns its concern.
