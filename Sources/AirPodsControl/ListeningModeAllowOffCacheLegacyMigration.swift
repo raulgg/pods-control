@@ -31,7 +31,8 @@ struct AllowOffCacheLegacyMigration {
   // path this call did not create is never chmod'd. After the new directory
   // or the marker exists, a missing file stays missing so a purge or deletion
   // cannot restore stale evidence. A check that cannot tell whether the
-  // marker exists leaves the new directory unpublished.
+  // marker exists does not create the new directory. A directory that
+  // already exists stays usable.
   func importIfNeeded() -> Bool {
     guard directoryURL.lastPathComponent == allowOffCacheDirectoryName,
           fileURL.lastPathComponent == allowOffCacheFileName
@@ -41,7 +42,7 @@ struct AllowOffCacheLegacyMigration {
     case .present:
       return true
     case .unreadable:
-      return false
+      return existingDirectoryStaysUsable()
     case .absent:
       return importWhileLocked()
     }
@@ -60,7 +61,7 @@ struct AllowOffCacheLegacyMigration {
     case .absent, .untrusted:
       return true
     case .unreadable:
-      return false
+      return existingDirectoryStaysUsable()
     case .opened(let descriptor):
       legacyDirectory = descriptor
     }
@@ -79,7 +80,7 @@ struct AllowOffCacheLegacyMigration {
     case .present:
       return true
     case .unreadable:
-      return false
+      return existingDirectoryStaysUsable()
     case .absent:
       break
     }
@@ -145,7 +146,7 @@ struct AllowOffCacheLegacyMigration {
       break
     }
 
-    guard fsyncDirectory(at: directoryURL.deletingLastPathComponent()),
+    guard fsyncParentDirectory(directoryURL.deletingLastPathComponent()),
           excludeVerifiedDirectoryFromBackup(dirfd: staging, url: directoryURL),
           recordLegacyMigrationMarker(dirfd: legacyDirectory)
     else {
@@ -686,10 +687,13 @@ struct AllowOffCacheLegacyMigration {
     Darwin.fsync(descriptor) == 0
   }
 
-  private func fsyncDirectory(at url: URL) -> Bool {
+  /// The parent of the cache directory may itself be a symlink. `mkdir` and
+  /// `rename` follow that link. `O_NOFOLLOW` would fail the open, and the
+  /// caller would delete the directory it had just published.
+  private func fsyncParentDirectory(_ url: URL) -> Bool {
     let descriptor = openFile(
       url,
-      flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+      flags: O_RDONLY | O_DIRECTORY | O_CLOEXEC
     )
     guard descriptor >= 0 else { return false }
     defer { Darwin.close(descriptor) }
@@ -724,6 +728,10 @@ struct AllowOffCacheLegacyMigration {
       guard let path else { return }
       _ = Darwin.rmdir(path)
     }
+  }
+
+  private func existingDirectoryStaysUsable() -> Bool {
+    !pathIsAbsent(directoryURL)
   }
 
   private func pathIsAbsent(_ url: URL) -> Bool {

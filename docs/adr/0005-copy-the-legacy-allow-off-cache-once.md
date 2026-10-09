@@ -24,7 +24,8 @@ removes that unpublished directory and does not record the marker, so a
 later call can retry. Once the new directory or the marker exists, a
 missing new cache stays a miss and is not copied again. A marker that is
 present but untrusted counts as finished. A check that cannot tell
-whether the marker exists leaves the new directory unpublished.
+whether the marker exists does not create the new directory. A
+directory that already exists stays in use.
 
 ## Consequences
 

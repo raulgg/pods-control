@@ -1352,6 +1352,153 @@ struct PersistentListeningModeAllowOffCacheTests {
     }
   }
 
+  @Test("Updates a published Allow Off cache when the migration marker cannot be read")
+  func allowOffCacheUpdatesPublishedCacheWhenMigrationMarkerIsUnreadable() {
+    withAllowOffCacheRenameFixture { legacyURL, newURL in
+      let clock = AllowOffCacheTestClock(Date(timeIntervalSince1970: 1_700_000_800))
+      let legacy = PersistentListeningModeAllowOffCache(
+        fileURL: legacyURL,
+        now: clock.read,
+        saltGenerator: { allowOffCacheTestSalt }
+      )
+      let rawUID = "published-unreadable-marker-uid"
+      #expect(
+        legacy.applyObservation(
+          rawDeviceUID: rawUID,
+          allowsOff: true,
+          observedAt: clock.value
+        ) == .applied,
+        "published unreadable marker test seeds legacy evidence"
+      )
+      let migrated = PersistentListeningModeAllowOffCache(
+        fileURL: newURL,
+        now: clock.read,
+        saltGenerator: { Data(repeating: 9, count: 32) }
+      )
+      guard allowOffRecord(from: migrated.lookup(rawDeviceUID: rawUID)) != nil else {
+        Issue.record("published unreadable marker test copies the legacy cache")
+        return
+      }
+      let marker = legacyURL
+        .deletingLastPathComponent()
+        .appendingPathComponent(allowOffCacheLegacyMigrationMarkerName)
+      do {
+        try FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0)],
+          ofItemAtPath: marker.path
+        )
+      } catch {
+        Issue.record("published unreadable marker test hides the marker")
+        return
+      }
+      defer {
+        try? FileManager.default.setAttributes(
+          [.posixPermissions: NSNumber(value: 0o600)],
+          ofItemAtPath: marker.path
+        )
+      }
+      let updatedAt = clock.value.addingTimeInterval(60)
+      clock.value = updatedAt
+      #expect(
+        migrated.applyObservation(
+          rawDeviceUID: rawUID,
+          allowsOff: true,
+          observedAt: updatedAt
+        ) == .applied,
+        "a published cache accepts a new observation while the marker cannot be read"
+      )
+      guard let record = allowOffRecord(
+        from: migrated.lookup(rawDeviceUID: rawUID)
+      ) else {
+        Issue.record("a published cache keeps the updated observation")
+        return
+      }
+      #expect(
+        record.evidence.observedAt == updatedAt,
+        "the update replaces the copied observation"
+      )
+    }
+  }
+
+  @Test("Copies a legacy Allow Off cache through a symlinked parent directory")
+  func allowOffCacheCopiesThroughSymlinkedParentDirectory() {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "pods-control-allow-off-symlink-parent-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    let realParent = root.appendingPathComponent("real", isDirectory: true)
+    let linkedParent = root.appendingPathComponent("caches", isDirectory: true)
+    do {
+      try FileManager.default.createDirectory(
+        at: realParent,
+        withIntermediateDirectories: true
+      )
+      try FileManager.default.createSymbolicLink(
+        at: linkedParent,
+        withDestinationURL: realParent
+      )
+    } catch {
+      Issue.record("symlink parent test prepares the caches link")
+      return
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+    let legacyURL = linkedParent
+      .appendingPathComponent(allowOffCacheLegacyDirectoryName, isDirectory: true)
+      .appendingPathComponent(allowOffCacheFileName, isDirectory: false)
+    let newURL = linkedParent
+      .appendingPathComponent(allowOffCacheDirectoryName, isDirectory: true)
+      .appendingPathComponent(allowOffCacheFileName, isDirectory: false)
+    let clock = AllowOffCacheTestClock(Date(timeIntervalSince1970: 1_700_000_900))
+    let legacy = PersistentListeningModeAllowOffCache(
+      fileURL: legacyURL,
+      now: clock.read,
+      saltGenerator: { allowOffCacheTestSalt }
+    )
+    let rawUID = "symlink-parent-migration-uid"
+    #expect(
+      legacy.applyObservation(
+        rawDeviceUID: rawUID,
+        allowsOff: true,
+        observedAt: clock.value
+      ) == .applied,
+      "symlink parent test seeds legacy evidence"
+    )
+    let migrated = PersistentListeningModeAllowOffCache(
+      fileURL: newURL,
+      now: clock.read,
+      saltGenerator: { Data(repeating: 9, count: 32) }
+    )
+    guard let record = allowOffRecord(
+      from: migrated.lookup(rawDeviceUID: rawUID)
+    ) else {
+      Issue.record("a symlinked parent still receives the legacy copy")
+      return
+    }
+    #expect(
+      record.evidence.observedAt == clock.value,
+      "the copy through a symlinked parent keeps the legacy timestamp"
+    )
+    let publishedDirectory = realParent.appendingPathComponent(
+      allowOffCacheDirectoryName,
+      isDirectory: true
+    )
+    #expect(
+      allowOffCacheLstat(publishedDirectory) != nil,
+      "the published directory remains in the real parent"
+    )
+    #expect(
+      allowOffCacheIsSymbolicLink(publishedDirectory) == false,
+      "the published directory is not the parent symlink"
+    )
+    let marker = legacyURL
+      .deletingLastPathComponent()
+      .appendingPathComponent(allowOffCacheLegacyMigrationMarkerName)
+    #expect(
+      (try? Data(contentsOf: marker)) == Data("1\n".utf8),
+      "the copy through a symlinked parent records the migration marker"
+    )
+  }
+
   @Test("Stores positive evidence and expires it at the fixed TTL")
   func persistentCacheStoresAndExpiresPositiveEvidence() {
     withTemporaryAllowOffCache { fileURL in
