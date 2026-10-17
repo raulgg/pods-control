@@ -19,7 +19,7 @@ install_from_source() {
 	CLT_SWIFTC=${CLT_SWIFTC:-$SWIFTC}
 	CLT_WAIT_SECS=${CLT_WAIT_SECS:-300}
 
-	SCRIPT_VERSION=0.5.0 # x-release-please-version
+	SCRIPT_VERSION=0.6.0 # x-release-please-version
 
 	E_USAGE=2
 	E_CLT=3
