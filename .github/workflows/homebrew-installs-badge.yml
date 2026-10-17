@@ -11,7 +11,7 @@ on:
     branches:
       - main
     paths:
-      - scripts/homebrew-installs-badge.sh
+      - .github/scripts/homebrew-installs-badge.sh
       - .github/workflows/homebrew-installs-badge.yml
 
 permissions:
@@ -51,7 +51,7 @@ jobs:
       - name: Build endpoint JSON
         if: steps.fetch.outcome == 'success'
         run: |
-          ./scripts/homebrew-installs-badge.sh \
+          ./.github/scripts/homebrew-installs-badge.sh \
             --analytics-file "$RUNNER_TEMP/install-90d.json" \
             --output "$RUNNER_TEMP/homebrew-installs.json"
           python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
