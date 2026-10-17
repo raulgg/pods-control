@@ -4,9 +4,9 @@
 
 set -eu
 
-# Homebrew's install counter still keys the previous formula name. Switching
-# this to pods-control before that name is reported would zero the badge.
-DEFAULT_FORMULA=raulgg/tap/airpods-control
+# Homebrew reports this formula separately from the deprecated
+# raulgg/tap/airpods-control formula.
+DEFAULT_FORMULA=raulgg/tap/pods-control
 DEFAULT_PERIOD=90d
 DEFAULT_LABEL='brew installs'
 
