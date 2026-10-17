@@ -78,11 +78,8 @@ in:
 ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json
 ```
 
-A missing file is copied from
-`~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
-when that older directory and file already meet the cache's ownership,
-mode, and regular-file checks. The older file is not deleted in this
-version. A failed copy is a miss.
+[ADR 0005](0005-stop-copying-the-legacy-allow-off-cache.md) removed the
+copy from the pre-rename cache directory.
 
 Each positive or denial record expires seven days after its observation. The
 lifetime is non-sliding: consuming a record does not refresh it. Internal

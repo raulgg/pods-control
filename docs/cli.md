@@ -240,11 +240,9 @@ backup-excluded cache is stored at:
 ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json
 ```
 
-If that file is missing, the same bytes are copied from
-`~/Library/Caches/io.github.raulgg.airpods-control/allow-off-v1.json`
-when that older directory and file already meet the cache's ownership,
-mode, and regular-file checks. The older file is left in place. A failed
-copy is a cache miss, not an operational error.
+The cache is not carried over from the pre-rename
+`~/Library/Caches/io.github.raulgg.airpods-control/` directory. That
+directory can be deleted.
 
 The key is the full SHA-256 digest of a random per-cache salt followed by the
 exact, case-sensitive public Core Audio UID. The cache persists the salt,
