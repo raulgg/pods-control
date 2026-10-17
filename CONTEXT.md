@@ -284,9 +284,9 @@
 
 **Allow Off cache store**
 : The deliberately disposable, per-user, backup-excluded file at
-  `~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json`. The
-  pre-rename `io.github.raulgg.airpods-control` cache is not read. Absence
-  or removal by cache cleanup is a cache miss, not an operational error.
+  `~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json`.
+  Absence or removal by cache cleanup is a cache miss, not an operational
+  error.
 
 **Stale availability gap**
 : The interval after Allow Off changes outside this CLI and before a later live

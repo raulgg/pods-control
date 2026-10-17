@@ -240,10 +240,6 @@ backup-excluded cache is stored at:
 ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json
 ```
 
-The cache is not carried over from the pre-rename
-`~/Library/Caches/io.github.raulgg.airpods-control/` directory. That
-directory can be deleted.
-
 The key is the full SHA-256 digest of a random per-cache salt followed by the
 exact, case-sensitive public Core Audio UID. The cache persists the salt,
 digest, and observation time. The raw UID is held only transiently and is never
