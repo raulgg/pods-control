@@ -78,9 +78,6 @@ in:
 ~/Library/Caches/io.github.raulgg.pods-control/allow-off-v1.json
 ```
 
-[ADR 0005](0005-stop-copying-the-legacy-allow-off-cache.md) removed the
-copy from the pre-rename cache directory.
-
 Each positive or denial record expires seven days after its observation. The
 lifetime is non-sliding: consuming a record does not refresh it. Internal
 tombstones only order observations and are exposed as a miss, not a denial. New
