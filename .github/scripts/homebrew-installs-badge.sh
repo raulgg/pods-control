@@ -4,8 +4,6 @@
 
 set -eu
 
-# Homebrew reports this formula separately from the deprecated
-# raulgg/tap/airpods-control formula.
 DEFAULT_FORMULA=raulgg/tap/pods-control
 DEFAULT_PERIOD=90d
 DEFAULT_LABEL='brew installs'
