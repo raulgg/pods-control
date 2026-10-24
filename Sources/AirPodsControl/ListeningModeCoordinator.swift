@@ -629,7 +629,15 @@ final class ListeningModeCoordinator {
         requested: request.modes,
         available: session.availableModes
       )
-      return supported.count >= 2 && session.writePlan != nil
+      // A requested Off that this transport cannot offer is not ready.
+      // Selection can then try the other transport's probe or cached
+      // Allow Off evidence. When neither transport can offer Off,
+      // execution still skips it and cycles what remains.
+      guard supported.count >= 2, session.writePlan != nil else { return false }
+      guard ListeningModePreflightPolicy.commandExplicitlyTargetsOff(command) else {
+        return true
+      }
+      return supported.contains(.off)
     }
   }
 }
