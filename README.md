@@ -49,9 +49,10 @@ The CLI does not poll in the background or automate the UI.
   Audio is selected as the macOS audio output or input with one `status`
   command.
 - Select a compatible output device by exact name.
-- Use it from scripts, hotkeys, Stream Decks, Shortcuts, or `launchd`.
-  Operational commands have stable stdout, documented exit codes, JSON output,
-  and opt-in debug diagnostics.
+- Use it from scripts, hotkeys, Stream Decks, Shortcuts, `launchd`, or the
+  [Raycast extension](https://www.raycast.com/raulg/pods-control). Operational
+  commands have stable stdout, documented exit codes, JSON output, and opt-in
+  debug diagnostics.
 
 ## Requirements
 
