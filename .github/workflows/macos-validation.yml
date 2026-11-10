@@ -40,8 +40,7 @@ jobs:
     name: Build, test, and verify install
     needs: gate
     if: needs.gate.outputs.should-run == 'true'
-    # macos-14 defaults to Swift 5.10, which cannot run Swift Testing.
-    # Use the runner's default toolchain with a Swift 6 minimum.
+    # Swift Testing needs Swift 6 from this runner's default toolchain.
     runs-on: macos-15
     timeout-minutes: 15
 

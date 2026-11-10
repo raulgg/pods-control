@@ -21,11 +21,11 @@ runs:
     - name: Set up mise
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
-        # Keep the action commit, version, and checksum pinned together.
-        # macos-14 is an arm64 runner, and this checksum covers the extracted
-        # mise-v2026.8.14-macos-arm64 executable, not its archive. Before
-        # updating the mise pin, wait seven days after release, verify the
-        # signed SHASUMS256.txt, and review the resulting workflow run.
+        # Change the action commit, the version, and this hash together.
+        # Copy the hash of mise-v<version>-macos-arm64 from the signed
+        # SHASUMS256.txt. Skip the .tar.zst and .tar.gz lines. Confirm
+        # that file's signature before you trust it. This action only
+        # checks the hash.
         version: "2026.8.14"
         sha256: "ba93b3fe7e47964e4392d40c8b7bfa5740e8c2a0a575e3e86268e9764082ed3e"
         install_args: ${{ inputs.install_args }}
