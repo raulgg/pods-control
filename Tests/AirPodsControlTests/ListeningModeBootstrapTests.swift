@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Testing
 
@@ -6,9 +7,10 @@ import Testing
 private func privateAVDevice(
   name: String,
   modes: [String] = Array(rawListeningModeValues.values),
+  mode: String = rawListeningModeValues[.transparency]!,
   sources: Set<PrivateAudioDiscoverySource>
 ) -> (PrivateAudioDevice, FakeRawDevice) {
-  let raw = FakeRawDevice(name: name, modes: modes)
+  let raw = FakeRawDevice(name: name, modes: modes, mode: mode)
   let device = PrivateAudioDevice.compatible(
     object: raw,
     sources: sources,
@@ -52,6 +54,30 @@ private final class HALInventoryRecorder {
     loadCount += 1
     return inventory
   }
+}
+
+private func deniedAllowOffCorrelation() -> ListeningModeAllowOffCorrelation {
+  let now = Date(timeIntervalSince1970: 2_000_000_000)
+  let backend = FakeHALRoutingBackend()
+  let targetID: AudioDeviceID = 42
+  backend.deviceUIDs[targetID] = .value("uid-42")
+  let cache = InMemoryListeningModeAllowOffCache(
+    salt: Data(repeating: 0xA5, count: 32),
+    now: { now }
+  )!
+  _ = cache.applyObservation(
+    rawDeviceUID: "uid-42",
+    allowsOff: false,
+    observedAt: now
+  )
+  return ListeningModeAllowOffCorrelation(
+    targetAudioDeviceID: targetID,
+    collisionAudioDeviceIDs: [targetID],
+    backend: backend,
+    cache: cache,
+    logger: DebugLogger(enabled: false),
+    now: { now }
+  )
 }
 
 @Suite("Listening mode bootstrap")
@@ -238,6 +264,130 @@ struct ListeningModeBootstrapTests {
       "HAL Off probe uses the allowing-off setter"
     )
     #expect(recorder.loadCount == 1, "explicit Off without AV Off constructs HAL inventory")
+  }
+
+  @Test
+  func loadsInventoryForExplicitOffCycleWithoutAVOff() throws {
+    let noOffModes = [
+      rawListeningModeValues[.transparency]!,
+      rawListeningModeValues[.adaptive]!,
+      rawListeningModeValues[.noiseCancellation]!,
+    ]
+    let (noOffAV, noOffRaw) = privateAVDevice(
+      name: "Desk AirPods",
+      modes: noOffModes,
+      mode: rawListeningModeValues[.noiseCancellation]!,
+      sources: [.contextSingular]
+    )
+    let probeHAL = FakeListeningModeTransport(
+      name: "Desk AirPods",
+      kind: .hal,
+      modes: [.transparency, .adaptive, .noiseCancellation],
+      current: .noiseCancellation
+    )
+    let recorder = HALInventoryRecorder(
+      candidates: [candidate(hal: probeHAL, route: .selected)]
+    )
+    let outcome = try bootstrapListeningModeOutcome(
+      ["lm", "cycle", "--modes", "off,transparency,noise-cancellation"],
+      avDevices: [noOffAV],
+      loadHAL: recorder.load
+    )
+    #expect(outcome.plain == "off", "an explicit Off cycle reaches the HAL Off probe")
+    #expect(noOffRaw.listeningModeSetCount == 0, "AV without Off does not take the cycle write")
+    #expect(
+      probeHAL.allowOffWrites == [true],
+      "the cycle Off target uses the allowing-off setter"
+    )
+    #expect(
+      probeHAL.setterTargets == [.off],
+      "Noise Cancellation wraps to Off when Off stays in the cycle set"
+    )
+    #expect(recorder.loadCount == 1, "explicit Off cycle without AV Off constructs HAL inventory")
+  }
+
+  @Test
+  func keepsSelectedAVWhenExplicitOffCycleIsDenied() throws {
+    let noOffModes = [
+      rawListeningModeValues[.transparency]!,
+      rawListeningModeValues[.adaptive]!,
+      rawListeningModeValues[.noiseCancellation]!,
+    ]
+    let (noOffAV, noOffRaw) = privateAVDevice(
+      name: "Desk AirPods",
+      modes: noOffModes,
+      mode: rawListeningModeValues[.noiseCancellation]!,
+      sources: [.contextSingular]
+    )
+    let deniedHAL = FakeListeningModeTransport(
+      name: "Desk AirPods",
+      kind: .hal,
+      modes: [.transparency, .adaptive, .noiseCancellation],
+      current: .transparency
+    )
+    let recorder = HALInventoryRecorder(
+      candidates: [
+        candidate(
+          hal: deniedHAL,
+          route: .selected,
+          allowOffCorrelation: deniedAllowOffCorrelation()
+        )
+      ]
+    )
+    let outcome = try bootstrapListeningModeOutcome(
+      ["lm", "cycle", "--modes", "off,transparency,noise-cancellation"],
+      avDevices: [noOffAV],
+      loadHAL: recorder.load
+    )
+    #expect(
+      outcome.plain == "transparency",
+      "a denied Off is skipped and the selected AV cycle continues"
+    )
+    #expect(noOffRaw.listeningModeSetCount == 1, "the reduced cycle writes through AV")
+    #expect(noOffRaw.mode == rawListeningModeValues[.transparency]!, "AV advances to Transparency")
+    #expect(deniedHAL.setterTargets.isEmpty, "cached Off denial does not move the cycle onto HAL")
+    #expect(recorder.loadCount == 1, "explicit Off cycle still consults HAL before skipping Off")
+  }
+
+  @Test
+  func defersInventoryForDefaultCycleWithoutAVOff() throws {
+    let noOffModes = [
+      rawListeningModeValues[.transparency]!,
+      rawListeningModeValues[.adaptive]!,
+      rawListeningModeValues[.noiseCancellation]!,
+    ]
+    let (noOffAV, noOffRaw) = privateAVDevice(
+      name: "Desk AirPods",
+      modes: noOffModes,
+      sources: [.contextSingular]
+    )
+    let recorder = HALInventoryRecorder()
+    let outcome = try bootstrapListeningModeOutcome(
+      ["lm", "cycle"],
+      avDevices: [noOffAV],
+      loadHAL: recorder.load
+    )
+    #expect(outcome.plain == "adaptive", "the default cycle stays on the non-Off AV set")
+    #expect(noOffRaw.listeningModeSetCount == 1, "the default cycle writes through AV")
+    #expect(recorder.loadCount == 0, "a default cycle does not construct HAL inventory for Off")
+  }
+
+  @Test
+  func defersInventoryForExplicitOffCycleWhenAVAdvertisesOff() throws {
+    let (selected, selectedRaw) = privateAVDevice(
+      name: "Desk AirPods",
+      mode: rawListeningModeValues[.noiseCancellation]!,
+      sources: [.contextSingular]
+    )
+    let recorder = HALInventoryRecorder()
+    let outcome = try bootstrapListeningModeOutcome(
+      ["lm", "cycle", "--modes", "off,transparency,noise-cancellation"],
+      avDevices: [selected],
+      loadHAL: recorder.load
+    )
+    #expect(outcome.plain == "off", "selected AV that advertises Off cycles to Off")
+    #expect(selectedRaw.listeningModeSetCount == 1, "AV Off cycle does not require HAL inventory")
+    #expect(recorder.loadCount == 0, "AV-ready Off cycle does not construct HAL inventory")
   }
 
   @Test
